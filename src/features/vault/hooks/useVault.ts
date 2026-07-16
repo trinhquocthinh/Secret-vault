@@ -39,6 +39,7 @@ export function useVault() {
           id: record.id,
           title: data.title,
           username: data.username,
+          totpSecret: data.totpSecret,
         });
       } catch (e) {
         console.error(`Bỏ qua bản ghi bị hỏng ID: ${record.id}`, e);
@@ -50,7 +51,18 @@ export function useVault() {
   /**
    * MỞ KHÓA HOẶC KHỞI TẠO KÉT SẮT (CANARY ARCHITECTURE)
    */
+  const MAX_ATTEMPTS = 5;
+  const LOCKOUT_DURATION_MS = 60 * 1000;
+
   const unlockVault = async (password: string): Promise<boolean> => {
+    // 1. KIỂM TRA THROTTLING TRƯỚC KHI THỰC THI CRYPTO
+    const lockoutUntil = parseInt(localStorage.getItem("vault_lockout") || "0", 10);
+    if (Date.now() < lockoutUntil) {
+      const waitTime = Math.ceil((lockoutUntil - Date.now()) / 1000);
+      setError(`Két sắt bị khóa tạm thời do nhập sai quá nhiều. Thử lại sau ${waitTime}s.`);
+      return false;
+    }
+
     setIsLoading(true);
     setError(null);
     const encoder = new TextEncoder();
@@ -76,6 +88,8 @@ export function useVault() {
         };
 
         await db.meta.put(newMeta);
+        localStorage.removeItem("vault_attempts");
+        localStorage.removeItem("vault_lockout");
         masterKeyRef.current = key;
         await fetchAndDecryptVault(key);
         setIsUnlocked(true);
@@ -102,17 +116,24 @@ export function useVault() {
         }
 
         // Nếu qua được ải Canary -> Mật khẩu chính xác 100%!
+        localStorage.removeItem("vault_attempts");
+        localStorage.removeItem("vault_lockout");
         masterKeyRef.current = key;
         await fetchAndDecryptVault(key);
         setIsUnlocked(true);
         return true;
       }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) {
-      if (err.message === "INVALID_PASSWORD") {
-        setError("Mật khẩu Master không chính xác! Vui lòng thử lại.");
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (err) {
+      // 2. XỬ LÝ KHI NHẬP SAI MẬT KHẨU
+      const attempts = parseInt(localStorage.getItem("vault_attempts") || "0", 10) + 1;
+      if (attempts >= MAX_ATTEMPTS) {
+        localStorage.setItem("vault_lockout", (Date.now() + LOCKOUT_DURATION_MS).toString());
+        localStorage.setItem("vault_attempts", "0");
+        setError("Đã nhập sai quá 5 lần. Két sắt bị khóa trong 1 phút.");
       } else {
-        setError("Có lỗi xảy ra khi đọc bộ nhớ Két sắt.");
+        localStorage.setItem("vault_attempts", attempts.toString());
+        setError(`Mật khẩu Master không chính xác! (Còn ${MAX_ATTEMPTS - attempts} lần thử).`);
       }
       return false;
     } finally {
