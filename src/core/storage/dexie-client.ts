@@ -8,15 +8,23 @@ import Dexie, { type EntityTable } from "dexie";
  */
 export interface VaultRecord {
   id: string; // UUID v4
-  ciphertext: ArrayBuffer; // Dữ liệu JSON (Title, User, Pass, TOTP Secret...) đã mã hóa
+  cipherText: ArrayBuffer; // Dữ liệu JSON (Title, User, Pass, TOTP Secret...) đã mã hóa
   iv: Uint8Array; // Initialization Vector dùng để giải mã bản ghi này
-  salt: Uint8Array; // Salt dùng để dẫn xuất khóa (nếu áp dụng salt riêng cho từng record hoặc vault)
   createdAt: number;
   updatedAt: number;
 }
 
+// Cấu hình bảo mật của Két sắt (Lưu Salt & Canary)
+export interface VaultMeta {
+  id: string; // Luôn là chuỗi cố định: 'VAULT_CONFIG'
+  salt: Uint8Array; // Salt dùng chung cho toàn bộ Két sắt
+  canaryCipherText: ArrayBuffer; // Chuỗi "CANARY" đã bị mã hóa
+  canaryIv: Uint8Array; // IV dùng để giải mã Canary
+}
+
 class VaultDatabase extends Dexie {
   records!: EntityTable<VaultRecord, "id">;
+  meta!: EntityTable<VaultMeta, 'id'>; // Thêm bảng meta
 
   constructor() {
     super("ZeroKnowledgeVaultDB");
@@ -25,6 +33,7 @@ class VaultDatabase extends Dexie {
     // Các trường nhị phân không cần đánh Index để tránh lộ metadata.
     this.version(1).stores({
       records: "id, createdAt, updatedAt",
+      meta: "id",
     });
   }
 }
