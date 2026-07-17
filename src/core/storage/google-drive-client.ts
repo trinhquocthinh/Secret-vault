@@ -70,7 +70,9 @@ export class GoogleDriveClient {
    *   Services sẽ log lỗi "Failed to open popup window... Maybe blocked by the browser?". Thay vào
    *   đó ta reject sớm với lỗi `AUTH_REQUIRED` để nơi gọi có thể bỏ qua đồng bộ ngầm một cách êm ái.
    */
-  public authenticate(options: { forcePrompt?: boolean; interactive?: boolean } = {}): Promise<string> {
+  public authenticate(
+    options: { forcePrompt?: boolean; interactive?: boolean } = {},
+  ): Promise<string> {
     const { forcePrompt = false, interactive = true } = options;
 
     return new Promise((resolve, reject) => {
@@ -103,6 +105,26 @@ export class GoogleDriveClient {
         }
         this.accessToken = resp.access_token;
         resolve(this.accessToken!);
+      };
+
+      this.tokenClient.error_callback = (err: { type?: string; message?: string }) => {
+        let message: string;
+        let code = "AUTH_ERROR";
+
+        if (err?.type === "popup_failed_to_open") {
+          message =
+            "Trình duyệt đã chặn popup đăng nhập Google. Vui lòng cho phép popup cho trang này rồi bấm Sync lại.";
+          code = "POPUP_BLOCKED";
+        } else if (err?.type === "popup_closed") {
+          message = "Bạn đã đóng cửa sổ đăng nhập Google trước khi hoàn tất. Vui lòng thử lại.";
+          code = "POPUP_CLOSED";
+        } else {
+          message = err?.message || "Không thể mở cửa sổ đăng nhập Google Drive.";
+        }
+
+        const e = new Error(message) as Error & { code: string };
+        e.code = code;
+        reject(e);
       };
 
       // 2. Điều khiển hành vi hiển thị popup dựa trên cờ forcePrompt
