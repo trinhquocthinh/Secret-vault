@@ -36,24 +36,25 @@ export class GoogleDriveClient {
    */
   public initClient(): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (!window.google?.accounts?.oauth2) {
-        reject(new Error("Google Identity Services SDK chưa được tải vào trình duyệt."));
-        return;
+      try {
+        this.ensureTokenClient();
+        resolve();
+      } catch (err) {
+        reject(err);
       }
+    });
+  }
 
-      this.tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: this.clientId,
-        scope: DRIVE_SCOPE,
-        callback: (response: any) => {
-          if (response.error !== undefined) {
-            reject(response);
-            return;
-          }
-          this.accessToken = response.access_token;
-          resolve();
-        },
-      });
-      resolve();
+  /** Khởi tạo tokenClient ĐỒNG BỘ (idempotent). Ném lỗi nếu SDK chưa sẵn sàng. */
+  private ensureTokenClient(): void {
+    if (this.tokenClient) return;
+    if (!window.google?.accounts?.oauth2) {
+      throw new Error("Google Identity Services SDK chưa tải xong. Đợi vài giây rồi thử lại.");
+    }
+    this.tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: this.clientId,
+      scope: DRIVE_SCOPE,
+      callback: () => {}, // gán lại trong authenticate()
     });
   }
 
@@ -76,8 +77,12 @@ export class GoogleDriveClient {
     const { forcePrompt = false, interactive = true } = options;
 
     return new Promise((resolve, reject) => {
-      if (!this.tokenClient) {
-        reject(new Error("Token Client chưa khởi tạo"));
+      // Khởi tạo tokenClient ĐỒNG BỘ ngay tại đây (nếu chưa có) để requestAccessToken() được gọi
+      // trong cùng tác vụ (task) của cú click => giữ "user gesture", trình duyệt không chặn popup.
+      try {
+        this.ensureTokenClient();
+      } catch (err) {
+        reject(err);
         return;
       }
 
