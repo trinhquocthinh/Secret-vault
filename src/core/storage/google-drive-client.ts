@@ -19,6 +19,8 @@ export interface SyncPayload {
     iv: number[];
     createdAt: number;
     updatedAt: number;
+    isDeleted?: boolean;
+    deletedAt?: number;
   }>;
 }
 

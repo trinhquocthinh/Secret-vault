@@ -35,21 +35,19 @@ export class VaultSyncEngine {
         canaryCipherText: this.bufferToArray(meta.canaryCipherText),
         canaryIv: this.bufferToArray(meta.canaryIv),
       },
-      records: records.map(
-        (r: {
-          id: any;
-          cipherText: ArrayBuffer | Uint8Array<ArrayBufferLike>;
-          iv: ArrayBuffer | Uint8Array<ArrayBufferLike>;
-          createdAt: any;
-          updatedAt: any;
-        }) => ({
-          id: r.id,
-          cipherText: this.bufferToArray(r.cipherText),
-          iv: this.bufferToArray(r.iv),
-          createdAt: r.createdAt,
-          updatedAt: r.updatedAt,
-        }),
-      ),
+      // LƯU Ý: KHÔNG được lọc bỏ các record có isDeleted=true khỏi payload xuất đi!
+      // Đây chính là "Ngôi Mộ" (Tombstone) - phải luôn đẩy nó lên Cloud để các thiết bị
+      // khác đọc được cờ xóa và tự xóa record tương ứng ở local của chúng. Nếu lọc bỏ ở
+      // đây, thiết bị khác sẽ không bao giờ biết record đã bị xóa => Bẫy "Khôi Phục Ma".
+      records: records.map((r: VaultRecord) => ({
+        id: r.id,
+        cipherText: this.bufferToArray(r.cipherText),
+        iv: this.bufferToArray(r.iv),
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        isDeleted: r.isDeleted,
+        deletedAt: r.deletedAt,
+      })),
     };
   }
 
@@ -120,8 +118,19 @@ export class VaultSyncEngine {
         iv: new Uint8Array(remote.iv),
         createdAt: remote.createdAt,
         updatedAt: remote.updatedAt,
+        isDeleted: remote.isDeleted,
+        deletedAt: remote.deletedAt,
       };
 
+      // THUẬT TOÁN LAST-WRITE-WINS THUẦN TÚY: so sánh updatedAt bất kể record đó là
+      // bản cập nhật thường hay một "Ngôi Mộ" (isDeleted=true). Miễn là mọi thao tác
+      // Update/Delete đều nghiêm túc set lại updatedAt = Date.now(), thuật toán này tự
+      // động xử lý đúng cả 2 tình huống:
+      //  - Máy A xóa record (tombstone mới hơn) -> máy B (đang có bản update cũ hơn) sẽ
+      //    nhận tombstone và xóa mềm theo, KHÔNG hồi sinh lại record.
+      //  - Máy A xóa record nhưng máy B cập nhật record đó sau lúc xóa (updatedAt mới
+      //    hơn) -> bản cập nhật của máy B thắng, record "sống lại" một cách CHỦ ĐÍCH
+      //    (đúng ý người dùng), không phải do lỗi logic.
       if (!local) {
         await db.records.add(remoteRecord);
         addedCount++;

@@ -12,6 +12,12 @@ export interface VaultRecord {
   iv: Uint8Array; // Initialization Vector dùng để giải mã bản ghi này
   createdAt: number;
   updatedAt: number;
+  // TOMBSTONE PATTERN (Soft Delete): Tuyệt đối không Hard Delete record khỏi IndexedDB,
+  // nếu không thiết bị khác chưa kịp sync sẽ "hồi sinh" (resurrect) lại record đã xóa
+  // trong lần Merge tiếp theo. Thay vào đó chỉ đánh dấu isDeleted + deletedAt, cập nhật
+  // updatedAt để thuật toán Last-Write-Wins nhận diện đúng đây là thay đổi mới nhất.
+  isDeleted?: boolean;
+  deletedAt?: number;
 }
 
 // Cấu hình bảo mật của Két sắt (Lưu Salt & Canary)

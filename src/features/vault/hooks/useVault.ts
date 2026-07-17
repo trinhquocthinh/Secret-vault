@@ -57,6 +57,9 @@ export function useVault() {
       let skipped = 0;
 
       for (const record of records) {
+        // Bỏ qua "Ngôi Mộ" (Tombstone): record đã bị xóa mềm (isDeleted=true) không được
+        // hiển thị lên UI, và cũng không có ciphertext hợp lệ để giải mã.
+        if (record.isDeleted) continue;
         try {
           const jsonStr = await AesGcmEngine.decrypt(
             { cipherText: record.cipherText, iv: record.iv },
@@ -210,7 +213,7 @@ export function useVault() {
   const getSecretPassword = async (id: string): Promise<string> => {
     if (!masterKeyRef.current || !activeDb) throw new Error("Két sắt đang bị khóa!");
     const record = await activeDb.records.get(id);
-    if (!record) throw new Error("Không tìm thấy dữ liệu!");
+    if (!record || record.isDeleted) throw new Error("Không tìm thấy dữ liệu!");
 
     const jsonStr = await AesGcmEngine.decrypt(
       { cipherText: record.cipherText, iv: record.iv },
@@ -218,6 +221,66 @@ export function useVault() {
     );
     const data = JSON.parse(jsonStr);
     return data.password || "";
+  };
+
+  /**
+   * CẬP NHẬT (UPDATE) một record đã tồn tại.
+   * - Luôn gọi AesGcmEngine.encrypt lại từ đầu => sinh ra một IV 12 bytes ngẫu nhiên MỚI
+   *   HOÀN TOÀN cho lần mã hóa này (không bao giờ tái sử dụng IV cũ), tránh lỗi tử hình
+   *   "IV Reuse" trong AES-GCM (2 bản mã dùng chung Key+IV sẽ lộ XOR của 2 bản rõ).
+   * - Luôn set lại `updatedAt = Date.now()` để thuật toán Last-Write-Wins của Sync Engine
+   *   nhận diện đúng đây là phiên bản mới nhất, tránh bị "Mất Phiên Bản" (Lost Update) khi
+   *   một thiết bị khác đẩy lên một bản ghi cũ hơn nhưng lỡ có timestamp nhỉnh hơn.
+   */
+  const updateSecret = async (id: string, updatedItem: Omit<SecretItem, "id">) => {
+    if (!masterKeyRef.current || !activeDb) throw new Error("Két sắt đang bị khóa!");
+
+    const existing = await activeDb.records.get(id);
+    if (!existing || existing.isDeleted) throw new Error("Không tìm thấy bản ghi để cập nhật!");
+
+    const plaintext = JSON.stringify({ ...updatedItem, id });
+    const encrypted = await AesGcmEngine.encrypt(plaintext, masterKeyRef.current);
+
+    const record: VaultRecord = {
+      id,
+      cipherText: encrypted.cipherText,
+      iv: encrypted.iv,
+      createdAt: existing.createdAt,
+      updatedAt: Date.now(),
+    };
+
+    await activeDb.records.put(record);
+    await fetchAndDecryptVault(masterKeyRef.current, activeDb);
+  };
+
+  /**
+   * XÓA (DELETE) một record theo mô hình TOMBSTONE (Soft Delete).
+   * Tuyệt đối không db.records.delete(id) ngay lập tức, nếu không thiết bị khác lâu ngày
+   * chưa sync sẽ vô tình "hồi sinh" (resurrect) lại record này trong lần Merge tiếp theo
+   * (Bẫy Khôi Phục Ma). Thay vào đó, ta chỉ đánh dấu isDeleted=true + deletedAt, đồng thời
+   * cập nhật updatedAt để Last-Write-Wins nhận diện đây là thay đổi mới nhất, rồi để cho
+   * chính việc Sync lan truyền tombstone này sang các thiết bị khác. Ciphertext/IV cũ được
+   * xóa rỗng luôn cho gọn (không còn cần thiết để hiển thị nữa).
+   */
+  const deleteSecret = async (id: string) => {
+    if (!masterKeyRef.current || !activeDb) throw new Error("Két sắt đang bị khóa!");
+
+    const existing = await activeDb.records.get(id);
+    if (!existing) return;
+
+    const now = Date.now();
+    const tombstone: VaultRecord = {
+      id,
+      cipherText: new ArrayBuffer(0),
+      iv: new Uint8Array(0),
+      createdAt: existing.createdAt,
+      updatedAt: now,
+      isDeleted: true,
+      deletedAt: now,
+    };
+
+    await activeDb.records.put(tombstone);
+    await fetchAndDecryptVault(masterKeyRef.current, activeDb);
   };
 
   return {
@@ -229,6 +292,8 @@ export function useVault() {
     unlockVault,
     lockVault,
     addSecret,
+    updateSecret,
+    deleteSecret,
     getSecretPassword,
     activeDb,
     vaultId,

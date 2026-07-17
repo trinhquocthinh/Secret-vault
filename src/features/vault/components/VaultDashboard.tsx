@@ -19,6 +19,8 @@ export const VaultDashboard: React.FC = () => {
         unlockVault,
         lockVault,
         addSecret,
+        updateSecret,
+        deleteSecret,
         getSecretPassword,
         activeDb,
         vaultId,
@@ -91,6 +93,21 @@ export const VaultDashboard: React.FC = () => {
         } finally {
             setIsAdding(false);
         }
+    };
+
+    // Cập nhật record: updateSecret() đã tự sinh IV mới + cập nhật updatedAt bên trong useVault.
+    // Sau khi lưu xong, kích hoạt đồng bộ ngầm để đẩy bản mới nhất lên Cloud ngay lập tức.
+    const handleUpdateSecret = async (id: string, updatedItem: { title: string; username: string; password?: string; totpSecret?: string }) => {
+        await updateSecret(id, updatedItem);
+        triggerSync({ interactive: false });
+    };
+
+    // Xóa record: deleteSecret() chỉ đánh dấu Tombstone (isDeleted=true), không Hard Delete,
+    // để tránh Bẫy "Khôi Phục Ma" khi thiết bị khác sync ngược lại. Đồng bộ ngầm ngay để lan
+    // truyền cờ xóa lên Cloud sớm nhất có thể.
+    const handleDeleteSecret = async (id: string) => {
+        await deleteSecret(id);
+        triggerSync({ interactive: false });
     };
 
     if (!isUnlocked) {
@@ -220,6 +237,9 @@ export const VaultDashboard: React.FC = () => {
                                     item={item}
                                     onCopyPassword={handleCopyPassword}
                                     onCopyOTP={handleCopyOTP}
+                                    onGetPassword={getSecretPassword}
+                                    onUpdate={handleUpdateSecret}
+                                    onDelete={handleDeleteSecret}
                                     isCopyingId={copiedId}
                                     countdown={countdown}
                                 />
