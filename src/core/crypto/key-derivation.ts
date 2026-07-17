@@ -21,7 +21,10 @@ export class KeyDerivationEngine {
   /**
    * Chuyển đổi Master Password từ dạng văn bản sang CryptoKey 256-bit.
    */
-  public static async deriveKey(passwordBuffer: Uint8Array, salt?: Uint8Array): Promise<DerivedKeyResult> {
+  public static async deriveKey(
+    passwordBuffer: Uint8Array,
+    salt?: Uint8Array,
+  ): Promise<DerivedKeyResult> {
     const actualSalt = salt || this.generateSalt();
 
     try {

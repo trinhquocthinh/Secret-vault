@@ -63,9 +63,12 @@ export class AesGcmEngine {
 
       return plaintext;
     } catch (error) {
-      throw new Error("Giải mã thất bại: Khóa không đúng hoặc dữ liệu đã bị can thiệp trái phép (Tampered Data).", {
-        cause: error,
-      });
+      throw new Error(
+        "Giải mã thất bại: Khóa không đúng hoặc dữ liệu đã bị can thiệp trái phép (Tampered Data).",
+        {
+          cause: error,
+        },
+      );
     }
   }
 }

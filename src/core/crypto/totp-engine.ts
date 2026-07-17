@@ -59,7 +59,11 @@ export class TotpEngine {
       );
 
       // 2. Ký HMAC-SHA1 với bộ đếm thời gian T
-      const signatureBuffer = await globalThis.crypto.subtle.sign("HMAC", cryptoKey, counterBytes as BufferSource);
+      const signatureBuffer = await globalThis.crypto.subtle.sign(
+        "HMAC",
+        cryptoKey,
+        counterBytes as BufferSource,
+      );
       const hash = new Uint8Array(signatureBuffer);
 
       // 3. Dynamic Truncation (Thuật toán cắt bit RFC 4226)

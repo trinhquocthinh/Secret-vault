@@ -22,12 +22,12 @@ export interface VaultMeta {
   canaryIv: Uint8Array; // IV dùng để giải mã Canary
 }
 
-class VaultDatabase extends Dexie {
+export class DynamicVaultDatabase extends Dexie {
   records!: EntityTable<VaultRecord, "id">;
-  meta!: EntityTable<VaultMeta, 'id'>; // Thêm bảng meta
+  meta!: EntityTable<VaultMeta, "id">; // Thêm bảng meta
 
-  constructor() {
-    super("ZeroKnowledgeVaultDB");
+  constructor(vaultId?: string) {
+    super(vaultId ? `ZeroKnowledgeVaultDB_${vaultId}` : "ZeroKnowledgeVaultDB");
 
     // Chỉ định định danh trường 'id' là Primary Key.
     // Các trường nhị phân không cần đánh Index để tránh lộ metadata.
@@ -38,4 +38,4 @@ class VaultDatabase extends Dexie {
   }
 }
 
-export const db = new VaultDatabase();
+export const db = new DynamicVaultDatabase();

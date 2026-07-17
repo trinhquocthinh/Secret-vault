@@ -1,6 +1,10 @@
-// src/features/vault/hooks/useVault.ts
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useRef, useCallback } from "react";
-import { db, type VaultRecord, type VaultMeta } from "../../../core/storage/dexie-client";
+import {
+  DynamicVaultDatabase,
+  type VaultRecord,
+  type VaultMeta,
+} from "../../../core/storage/dexie-client";
 import { KeyDerivationEngine } from "../../../core/crypto/key-derivation";
 import { AesGcmEngine } from "../../../core/crypto/aes-gcm";
 import { MemoryWiper } from "../../../core/crypto/memory-wiper";
@@ -15,51 +19,72 @@ export interface SecretItem {
 
 const CANARY_STRING = "ZERO_KNOWLEDGE_VAULT_VALID_CANARY";
 const META_ID = "VAULT_CONFIG";
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 60 * 1000; // Khóa 1 phút
+
+// Hàm tiện ích băm SHA-256 tạo Vault ID độc nhất từ mật khẩu
+const deriveVaultId = async (password: string): Promise<string> => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + "vault_id_namespace_salt");
+  const hashBuffer = await globalThis.crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32);
+};
 
 export function useVault() {
   const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
   const [secrets, setSecrets] = useState<SecretItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [skippedRecordCount, setSkippedRecordCount] = useState<number>(0);
 
+  const [activeDb, setActiveDb] = useState<DynamicVaultDatabase | null>(null);
+  const [vaultId, setVaultId] = useState<string | null>(null);
   const masterKeyRef = useRef<CryptoKey | null>(null);
 
-  /**
-   * Tải và giải mã danh sách metadata từ IndexedDB
-   */
-  const fetchAndDecryptVault = useCallback(async (key: CryptoKey) => {
-    const records = await db.records.toArray();
-    const decryptedList: SecretItem[] = [];
-
-    for (const record of records) {
-      try {
-        const jsonStr = await AesGcmEngine.decrypt({ cipherText: record.cipherText, iv: record.iv }, key);
-        const data = JSON.parse(jsonStr);
-        decryptedList.push({
-          id: record.id,
-          title: data.title,
-          username: data.username,
-          totpSecret: data.totpSecret,
-        });
-      } catch (e) {
-        console.error(`Bỏ qua bản ghi bị hỏng ID: ${record.id}`, e);
+  const fetchAndDecryptVault = useCallback(
+    async (key: CryptoKey, dbInstance: DynamicVaultDatabase) => {
+      // ĐIỂM CHẠM SENIOR 1: Đảm bảo database đã mở kết nối vật lý hoàn toàn trước khi đọc dữ liệu
+      if (!dbInstance.isOpen()) {
+        await dbInstance.open();
       }
-    }
-    setSecrets(decryptedList);
-  }, []);
 
-  /**
-   * MỞ KHÓA HOẶC KHỞI TẠO KÉT SẮT (CANARY ARCHITECTURE)
-   */
-  const MAX_ATTEMPTS = 5;
-  const LOCKOUT_DURATION_MS = 60 * 1000;
+      const records = await dbInstance.records.toArray();
+      const decryptedList: SecretItem[] = [];
+      let skipped = 0;
+
+      for (const record of records) {
+        try {
+          const jsonStr = await AesGcmEngine.decrypt(
+            { cipherText: record.cipherText, iv: record.iv },
+            key,
+          );
+          const data = JSON.parse(jsonStr);
+          decryptedList.push({
+            id: record.id,
+            title: data.title,
+            username: data.username,
+            totpSecret: data.totpSecret,
+          });
+        } catch (e) {
+          skipped++;
+          console.error(`Bỏ qua bản ghi lỗi ID: ${record.id}`, e);
+        }
+      }
+      setSkippedRecordCount(skipped);
+      setSecrets(decryptedList);
+    },
+    [],
+  );
 
   const unlockVault = async (password: string): Promise<boolean> => {
-    // 1. KIỂM TRA THROTTLING TRƯỚC KHI THỰC THI CRYPTO
     const lockoutUntil = parseInt(localStorage.getItem("vault_lockout") || "0", 10);
     if (Date.now() < lockoutUntil) {
       const waitTime = Math.ceil((lockoutUntil - Date.now()) / 1000);
-      setError(`Két sắt bị khóa tạm thời do nhập sai quá nhiều. Thử lại sau ${waitTime}s.`);
+      setError(`Két sắt bị khóa tạm thời. Thử lại sau ${waitTime}s.`);
       return false;
     }
 
@@ -69,71 +94,69 @@ export function useVault() {
     const passBuffer = encoder.encode(password);
 
     try {
-      // 1. Kiểm tra xem Két sắt đã từng được tạo cấu hình chưa
-      const meta = await db.meta.get(META_ID);
+      const derivedVaultId = await deriveVaultId(password);
+      const dbInstance = new DynamicVaultDatabase(derivedVaultId);
 
-      if (!meta) {
-        // --- TRƯỜNG HỢP 1: KHỞI TẠO KÉT SẮT LẦN ĐẦU (FIRST-TIME SETUP) ---
-        console.log("Khởi tạo Két sắt mới...");
-        const { key, salt } = await KeyDerivationEngine.deriveKey(passBuffer);
+      // ĐIỂM CHẠM SENIOR 2: Chủ động kích hoạt kết nối tuần tự
+      await dbInstance.open();
 
-        // Mã hóa Canary string để làm "Huy hiệu xác thực" cho các lần đăng nhập sau
-        const encryptedCanary = await AesGcmEngine.encrypt(CANARY_STRING, key);
+      const meta = await dbInstance.meta.get(META_ID);
 
-        const newMeta: VaultMeta = {
-          id: META_ID,
-          salt: salt,
-          canaryCipherText: encryptedCanary.cipherText,
-          canaryIv: encryptedCanary.iv,
-        };
+      const resolvedKey: CryptoKey = await (async () => {
+        if (!meta) {
+          const { key, salt } = await KeyDerivationEngine.deriveKey(passBuffer);
+          const encryptedCanary = await AesGcmEngine.encrypt(CANARY_STRING, key);
 
-        await db.meta.put(newMeta);
-        localStorage.removeItem("vault_attempts");
-        localStorage.removeItem("vault_lockout");
-        masterKeyRef.current = key;
-        await fetchAndDecryptVault(key);
-        setIsUnlocked(true);
-        return true;
-      } else {
-        // --- TRƯỜNG HỢP 2: MỞ KHÓA KÉT SẮT ĐÃ CÓ (NORMAL UNLOCK) ---
-        console.log("Đang xác thực Master Password...");
-        // BẮT BUỘC TRUYỀN LẠI SALT CŨ từ database vào hàm dẫn xuất
-        const { key } = await KeyDerivationEngine.deriveKey(passBuffer, meta.salt);
+          const newMeta: VaultMeta = {
+            id: META_ID,
+            salt: salt,
+            canaryCipherText: encryptedCanary.cipherText,
+            canaryIv: encryptedCanary.iv,
+          };
 
-        // THỬ GIẢI MÃ CANARY ĐỂ KIỂM CHỨNG MẬT KHẨU
-        try {
-          const decryptedCanary = await AesGcmEngine.decrypt(
-            { cipherText: meta.canaryCipherText, iv: meta.canaryIv },
-            key,
-          );
+          await dbInstance.meta.put(newMeta);
+          return key;
+        } else {
+          const { key } = await KeyDerivationEngine.deriveKey(passBuffer, meta.salt);
 
-          if (decryptedCanary !== CANARY_STRING) {
-            throw new Error("Canary mismatch");
+          try {
+            const decryptedCanary = await AesGcmEngine.decrypt(
+              { cipherText: meta.canaryCipherText, iv: meta.canaryIv },
+              key,
+            );
+            if (decryptedCanary !== CANARY_STRING) throw new Error("Canary mismatch");
+          } catch {
+            throw new Error("INVALID_PASSWORD");
           }
-        } catch (canaryError) {
-          // Nếu giải mã Canary thất bại -> CHẮC CHẮN SAI MẬT KHẨU!
-          throw new Error("INVALID_PASSWORD", { cause: canaryError });
+          return key;
         }
+      })();
 
-        // Nếu qua được ải Canary -> Mật khẩu chính xác 100%!
-        localStorage.removeItem("vault_attempts");
-        localStorage.removeItem("vault_lockout");
-        masterKeyRef.current = key;
-        await fetchAndDecryptVault(key);
-        setIsUnlocked(true);
-        return true;
-      }
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (err) {
-      // 2. XỬ LÝ KHI NHẬP SAI MẬT KHẨU
-      const attempts = parseInt(localStorage.getItem("vault_attempts") || "0", 10) + 1;
-      if (attempts >= MAX_ATTEMPTS) {
-        localStorage.setItem("vault_lockout", (Date.now() + LOCKOUT_DURATION_MS).toString());
-        localStorage.setItem("vault_attempts", "0");
-        setError("Đã nhập sai quá 5 lần. Két sắt bị khóa trong 1 phút.");
+      masterKeyRef.current = resolvedKey;
+
+      // Thực hiện giải mã và chuẩn bị mảng dữ liệu vào bộ nhớ RAM trước khi đẩy trạng thái lên UI
+      await fetchAndDecryptVault(resolvedKey, dbInstance);
+
+      setActiveDb(dbInstance);
+      setVaultId(derivedVaultId);
+      setIsUnlocked(true);
+
+      localStorage.removeItem("vault_attempts");
+      localStorage.removeItem("vault_lockout");
+      return true;
+    } catch (err: any) {
+      if (err.message === "INVALID_PASSWORD") {
+        const attempts = parseInt(localStorage.getItem("vault_attempts") || "0", 10) + 1;
+        if (attempts >= MAX_ATTEMPTS) {
+          localStorage.setItem("vault_lockout", (Date.now() + LOCKOUT_DURATION_MS).toString());
+          localStorage.setItem("vault_attempts", "0");
+          setError(`Đã nhập sai quá ${MAX_ATTEMPTS} lần. Két sắt bị khóa trong 1 phút.`);
+        } else {
+          localStorage.setItem("vault_attempts", attempts.toString());
+          setError(`Mật khẩu Master không chính xác! (Còn ${MAX_ATTEMPTS - attempts} lần thử).`);
+        }
       } else {
-        localStorage.setItem("vault_attempts", attempts.toString());
-        setError(`Mật khẩu Master không chính xác! (Còn ${MAX_ATTEMPTS - attempts} lần thử).`);
+        setError("Có lỗi xảy ra khi đọc bộ nhớ Két sắt.");
       }
       return false;
     } finally {
@@ -142,20 +165,31 @@ export function useVault() {
     }
   };
 
-  /**
-   * Khóa Két sắt và lập tức xóa sạch RAM
-   */
-  const lockVault = useCallback(() => {
+  // ĐIỂM CHẠM SENIOR 3: Chuyển hàm lockVault thành hàm Async để giải phóng triệt để kết nối ổ đĩa,
+  // loại bỏ hoàn toàn tình trạng kẹt kết nối IndexedDB khi re-login ngay lập tức
+  const lockVault = useCallback(async () => {
     masterKeyRef.current = null;
+    if (activeDb) {
+      try {
+        await activeDb.close(); // BẮT BUỘC AWAIT KẾT NỐI VẬT LÝ VỪA ĐÓNG
+      } catch (e) {
+        console.error("Lỗi đóng kết nối DB vật lý:", e);
+      }
+    }
+    setActiveDb(null);
+    setVaultId(null);
     setSecrets([]);
+    setSkippedRecordCount(0);
     setIsUnlocked(false);
-  }, []);
+  }, [activeDb]);
 
-  /**
-   * Thêm một bản ghi bí mật mới vào Két sắt
-   */
+  const refreshVault = useCallback(async () => {
+    if (!masterKeyRef.current || !activeDb) return;
+    await fetchAndDecryptVault(masterKeyRef.current, activeDb);
+  }, [activeDb, fetchAndDecryptVault]);
+
   const addSecret = async (newItem: Omit<SecretItem, "id">) => {
-    if (!masterKeyRef.current) throw new Error("Két sắt đang bị khóa!");
+    if (!masterKeyRef.current || !activeDb) throw new Error("Két sắt đang bị khóa!");
 
     const id = crypto.randomUUID();
     const plaintext = JSON.stringify({ ...newItem, id });
@@ -169,19 +203,19 @@ export function useVault() {
       updatedAt: Date.now(),
     };
 
-    await db.records.add(record);
-    await fetchAndDecryptVault(masterKeyRef.current);
+    await activeDb.records.add(record);
+    await fetchAndDecryptVault(masterKeyRef.current, activeDb);
   };
 
-  /**
-   * Giải mã lazy-load chi tiết 1 mật khẩu
-   */
   const getSecretPassword = async (id: string): Promise<string> => {
-    if (!masterKeyRef.current) throw new Error("Két sắt đang bị khóa!");
-    const record = await db.records.get(id);
+    if (!masterKeyRef.current || !activeDb) throw new Error("Két sắt đang bị khóa!");
+    const record = await activeDb.records.get(id);
     if (!record) throw new Error("Không tìm thấy dữ liệu!");
 
-    const jsonStr = await AesGcmEngine.decrypt({ cipherText: record.cipherText, iv: record.iv }, masterKeyRef.current);
+    const jsonStr = await AesGcmEngine.decrypt(
+      { cipherText: record.cipherText, iv: record.iv },
+      masterKeyRef.current,
+    );
     const data = JSON.parse(jsonStr);
     return data.password || "";
   };
@@ -191,9 +225,13 @@ export function useVault() {
     isLoading,
     error,
     secrets,
+    skippedRecordCount,
     unlockVault,
     lockVault,
     addSecret,
     getSecretPassword,
+    activeDb,
+    vaultId,
+    refreshVault,
   };
 }

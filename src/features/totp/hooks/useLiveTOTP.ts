@@ -27,7 +27,7 @@ export function useLiveTOTP(secretBase32?: string) {
     try {
       const code = await TotpEngine.generateTOTP(secret);
       setOtp(code);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (e) {
       setOtp("ERROR ");
     }
@@ -65,7 +65,6 @@ export function useLiveTOTP(secretBase32?: string) {
     };
 
     timerRef.current = setInterval(tick, 1000);
-
 
     return () => {
       clearTimeout(timeoutId);

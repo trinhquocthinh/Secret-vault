@@ -1,7 +1,7 @@
-import { VaultDashboard } from './features/vault/components/VaultDashboard'
+import { VaultDashboard } from "./features/vault/components/VaultDashboard";
 
 function App() {
-  return <VaultDashboard />
+  return <VaultDashboard />;
 }
 
-export default App
+export default App;

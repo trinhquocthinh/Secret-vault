@@ -8,7 +8,15 @@
  */
 export class MemoryWiper {
   public static wipe(
-    data: Uint8Array | Int8Array | Uint16Array | Int16Array | Uint32Array | Int32Array | Float32Array | Float64Array,
+    data:
+      | Uint8Array
+      | Int8Array
+      | Uint16Array
+      | Int16Array
+      | Uint32Array
+      | Int32Array
+      | Float32Array
+      | Float64Array,
   ): void {
     if (data && "fill" in data) {
       data.fill(0);
