@@ -21,8 +21,14 @@ export function useVaultSync(
 
   /**
    * Kích hoạt luồng Đồng Bộ Hóa Đa Chiều (Pull & Push)
+   *
+   * @param options.interactive Có phải lệnh gọi này xuất phát trực tiếp từ thao tác click của
+   *   người dùng hay không (vd: bấm nút Sync = true; auto-sync ngầm sau khi thêm secret = false).
+   *   Khi `false` và chưa có access token sẵn, ta bỏ qua việc mở popup xin quyền (tránh bị trình
+   *   duyệt chặn) và chỉ âm thầm dừng đồng bộ, không hiển thị lỗi giật mình cho người dùng.
    */
-  const triggerSync = useCallback(async () => {
+  const triggerSync = useCallback(async (options: { interactive?: boolean } = {}) => {
+    const { interactive = true } = options;
     if (!db || !vaultId) return setError("Két sắt chưa được mở.");
     setIsSyncing(true);
     setError(null);
@@ -30,7 +36,7 @@ export function useVaultSync(
 
     try {
       await driveClient.initClient();
-      await driveClient.authenticate(); // Gọi ngầm (Silent Flow)
+      await driveClient.authenticate({ interactive }); // interactive=false => chỉ silent, không mở popup
 
       const remoteData = await driveClient.downloadBackup();
       if (remoteData) {
@@ -53,8 +59,13 @@ export function useVaultSync(
       await driveClient.uploadBackup(mergedPayload);
       setSyncStatus(`Đồng bộ thành công lúc ${new Date().toLocaleTimeString("vi-VN")}`);
     } catch (err: any) {
-      setError(err.message || "Đồng bộ hóa thất bại.");
-      setSyncStatus("Đồng bộ lỗi");
+      // Auto-sync ngầm (interactive=false) không có token sẵn: bỏ qua êm ái, không báo lỗi giật mình.
+      if (err?.code === "AUTH_REQUIRED" && !interactive) {
+        setSyncStatus("Chưa đồng bộ (nhấn nút Sync để đăng nhập Google Drive)");
+      } else {
+        setError(err.message || "Đồng bộ hóa thất bại.");
+        setSyncStatus("Đồng bộ lỗi");
+      }
     } finally {
       setIsSyncing(false);
     }

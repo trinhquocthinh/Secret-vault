@@ -61,8 +61,18 @@ export class GoogleDriveClient {
    * Yêu cầu cấp quyền (OAuth2 Flow)
    * ĐIỂM CHẠM SENIOR: Cải tiến cơ chế Silent Token Acquisition (Lấy token ngầm)
    * Chỉ bắt người dùng tương tác popup ở lần đầu tiên. Những lần sau sẽ tự động chạy ngầm.
+   *
+   * @param options.forcePrompt Buộc hiện popup "consent" (xin lại quyền) thay vì popup mặc định.
+   * @param options.interactive Đánh dấu lệnh gọi này có xuất phát TRỰC TIẾP từ thao tác click
+   *   của người dùng hay không. Khi `false` (vd: auto-sync ngầm sau khi thêm secret) và chưa có
+   *   access token trong RAM, ta KHÔNG được gọi `requestAccessToken` vì trình duyệt (đặc biệt
+   *   Safari) sẽ chặn popup do không nhận diện được đây là hành động của user, và Google Identity
+   *   Services sẽ log lỗi "Failed to open popup window... Maybe blocked by the browser?". Thay vào
+   *   đó ta reject sớm với lỗi `AUTH_REQUIRED` để nơi gọi có thể bỏ qua đồng bộ ngầm một cách êm ái.
    */
-  public authenticate(forcePrompt = false): Promise<string> {
+  public authenticate(options: { forcePrompt?: boolean; interactive?: boolean } = {}): Promise<string> {
+    const { forcePrompt = false, interactive = true } = options;
+
     return new Promise((resolve, reject) => {
       if (!this.tokenClient) {
         reject(new Error("Token Client chưa khởi tạo"));
@@ -72,6 +82,17 @@ export class GoogleDriveClient {
       // 1. Tối ưu hóa: Nếu token đã có sẵn trong RAM, tái sử dụng ngay lập tức
       if (this.accessToken) {
         resolve(this.accessToken);
+        return;
+      }
+
+      // 1b. Nếu đây KHÔNG phải luồng tương tác trực tiếp (click) và chưa có token,
+      // không được mở popup — dừng ngay để tránh bị trình duyệt chặn & log lỗi.
+      if (!interactive) {
+        const err = new Error(
+          "Cần đăng nhập lại Google Drive (yêu cầu thao tác trực tiếp của người dùng).",
+        ) as Error & { code: string };
+        err.code = "AUTH_REQUIRED";
+        reject(err);
         return;
       }
 
@@ -93,6 +114,13 @@ export class GoogleDriveClient {
         this.tokenClient.requestAccessToken({ prompt: "" });
       }
     });
+  }
+
+  /**
+   * Kiểm tra xem đã có access token còn hiệu lực trong RAM hay chưa (không tự động xin quyền mới).
+   */
+  public hasValidToken(): boolean {
+    return this.accessToken !== null;
   }
 
   /**

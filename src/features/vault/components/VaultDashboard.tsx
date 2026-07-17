@@ -83,8 +83,11 @@ export const VaultDashboard: React.FC = () => {
             setUsername("");
             setPassword("");
             setTotpSecret("");
-            // Tự động kích hoạt đồng bộ ngầm sau khi thêm mật khẩu mới (như 1Password)
-            triggerSync();
+            // Tự động kích hoạt đồng bộ ngầm sau khi thêm mật khẩu mới (như 1Password).
+            // interactive=false: đây KHÔNG phải kết quả trực tiếp của 1 cú click chuột (đã đi qua
+            // await addSecret), nên nếu chưa có access token sẵn, không được mở popup xin quyền
+            // (trình duyệt sẽ chặn). Người dùng cần bấm nút Sync thủ công cho lần đăng nhập đầu.
+            triggerSync({ interactive: false });
         } finally {
             setIsAdding(false);
         }
