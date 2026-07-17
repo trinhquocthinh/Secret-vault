@@ -21,6 +21,7 @@ pnpm-debug.log*
 .idea/
 
 # Env files (never commit secrets)
+keys/
 .env
 .env.*
 !.env.example
