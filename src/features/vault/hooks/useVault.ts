@@ -5,9 +5,11 @@ import {
   type VaultRecord,
   type VaultMeta,
 } from "../../../core/storage/dexie-client";
-import { KeyDerivationEngine } from "../../../core/crypto/key-derivation";
 import { AesGcmEngine } from "../../../core/crypto/aes-gcm";
 import { MemoryWiper } from "../../../core/crypto/memory-wiper";
+import { KeyDerivationWorkerClient } from "../../../core/crypto/worker-client";
+import { VaultMigrationEngine } from "../../../core/storage/vault-migration-engine";
+import { WebAuthnPrfEngine } from "../../../core/crypto/webauthn-prf";
 
 export interface SecretItem {
   id: string;
@@ -107,7 +109,7 @@ export function useVault() {
 
       const resolvedKey: CryptoKey = await (async () => {
         if (!meta) {
-          const { key, salt } = await KeyDerivationEngine.deriveKey(passBuffer);
+          const { key, salt } = await KeyDerivationWorkerClient.deriveKey(passBuffer);
           const encryptedCanary = await AesGcmEngine.encrypt(CANARY_STRING, key);
 
           const newMeta: VaultMeta = {
@@ -120,7 +122,7 @@ export function useVault() {
           await dbInstance.meta.put(newMeta);
           return key;
         } else {
-          const { key } = await KeyDerivationEngine.deriveKey(passBuffer, meta.salt);
+          const { key } = await KeyDerivationWorkerClient.deriveKey(passBuffer, meta.salt);
 
           try {
             const decryptedCanary = await AesGcmEngine.decrypt(
@@ -163,7 +165,9 @@ export function useVault() {
       }
       return false;
     } finally {
-      MemoryWiper.wipe(passBuffer);
+      if (passBuffer.byteLength > 0) {
+        MemoryWiper.wipe(passBuffer);
+      }
       setIsLoading(false);
     }
   };
@@ -283,6 +287,207 @@ export function useVault() {
     await fetchAndDecryptVault(masterKeyRef.current, activeDb);
   };
 
+  /**
+   * ENGINE XOAY VÒNG KHÓA VÀ DI DỜI DATABASE CỤC BỘ (KEY ROTATION PIPELINE)
+   */
+  const changePassword = async (oldPassword: string, newPassword: string): Promise<boolean> => {
+    if (!masterKeyRef.current || !activeDb || !vaultId) {
+      setError("Két sắt phải được mở khóa trước khi thực hiện đổi mật khẩu.");
+      return false;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    const encoder = new TextEncoder();
+    const oldPassBuffer = encoder.encode(oldPassword);
+    const newPassBuffer = encoder.encode(newPassword);
+
+    try {
+      // 1. Kiểm tra tính chính xác của mật khẩu cũ thông qua so khớp Vault ID
+      const derivedOldVaultId = await deriveVaultId(oldPassword);
+      if (derivedOldVaultId !== vaultId) {
+        throw new Error("MẬT_KHẨU_CŨ_KHÔNG_CHÍNH_XÁC");
+      }
+
+      // 2. Kiểm tra mật khẩu mới trùng lặp
+      const derivedNewVaultId = await deriveVaultId(newPassword);
+      if (derivedNewVaultId === vaultId) {
+        throw new Error("Mật khẩu mới không được trùng với mật khẩu Master hiện tại.");
+      }
+
+      // 3. Sinh Salt PBKDF2 mới hoàn toàn cho mật khẩu mới
+      const newSalt = crypto.getRandomValues(new Uint8Array(16));
+
+      // 4. Gọi Web Worker luồng phụ tính toán 600,000 vòng lặp PBKDF2 tạo Khóa chính mới
+      const { key: newKey } = await KeyDerivationWorkerClient.deriveKey(newPassBuffer, newSalt);
+
+      // 5. Tạo Huy hiệu xác thực hoàng yến (Canary Verifier) mới
+      const encryptedCanary = await AesGcmEngine.encrypt(CANARY_STRING, newKey);
+
+      const newMeta: VaultMeta = {
+        id: META_ID,
+        salt: newSalt,
+        canaryCipherText: encryptedCanary.cipherText,
+        canaryIv: encryptedCanary.iv,
+      };
+
+      const newDbName = derivedNewVaultId;
+
+      // 6. Kích hoạt Migration Engine thực hiện giải mã và mã hóa lại toàn bộ kho lưu trữ
+      const newDbInstance = await VaultMigrationEngine.migrateVaultData(
+        activeDb,
+        masterKeyRef.current,
+        newDbName,
+        newKey,
+        newMeta,
+      );
+
+      // 7. Giải phóng vật lý và XÓA HOÀN TOÀN file Database cũ trên ổ đĩa
+      const oldDbName = vaultId;
+      await activeDb.close(); // Giải phóng connection lock chống kẹt kết nối vật lý
+
+      // Sử dụng native Web API xóa triệt để file DB cũ khỏi ổ cứng trình duyệt
+      await new Promise<void>((resolve, reject) => {
+        const req = globalThis.indexedDB.deleteDatabase(oldDbName);
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+
+      // 8. Thực hiện Hot-Swap các tham chiếu mật mã học trong RAM State của React
+      masterKeyRef.current = newKey;
+      setVaultId(derivedNewVaultId);
+      setActiveDb(newDbInstance);
+
+      // 9. Nạp lại danh sách bản ghi mới vào RAM để UI cập nhật mượt mà
+      await fetchAndDecryptVault(newKey, newDbInstance);
+
+      // Lưu ý: Nếu người dùng cấu hình Auto-Sync Cloud, lần đồng bộ tiếp theo
+      // sẽ tự động đẩy bản mã hóa mới này lên file `zero_knowledge_vault_sync.enc` của Drive.
+      return true;
+    } catch (err: any) {
+      if (err.message === "MẬT_KHẨU_CŨ_KHÔNG_CHÍNH_XÁC") {
+        setError("Mật khẩu cũ không chính xác!");
+      } else {
+        setError(err.message || "Có lỗi xảy ra trong quá trình xoay vòng khóa.");
+      }
+      return false;
+    } finally {
+      // Dọn sạch vùng dữ liệu mật khẩu thô nhị phân tại Main Thread chống Memory Dump
+      if (oldPassBuffer.byteLength > 0) MemoryWiper.wipe(oldPassBuffer);
+      if (newPassBuffer.byteLength > 0) MemoryWiper.wipe(newPassBuffer);
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * [PHASE 4] ĐĂNG KÝ VÂN TAY VÀ MÃ HÓA (WRAP) MASTER KEY
+   */
+  const enableBiometric = async (): Promise<boolean> => {
+    if (!masterKeyRef.current || !activeDb || !vaultId) {
+      setError("Két sắt phải đang mở khóa để kích hoạt sinh trắc học.");
+      return false;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // 1. Kiểm tra phần cứng
+      if (!(await WebAuthnPrfEngine.isSupported())) {
+        throw new Error("Thiết bị hoặc trình duyệt hiện tại không hỗ trợ chuẩn WebAuthn PRF.");
+      }
+
+      // 2. Kích hoạt cảm biến vân tay/FaceID để đăng ký Credential + lấy KEK
+      const { credentialId, prfSymmetricKey } = await WebAuthnPrfEngine.registerBiometric(
+        vaultId,
+        "Zero-Vault User",
+      );
+
+      // 3. Xuất Master Key hiện tại ra nhị phân thô trong RAM
+      const rawMasterKey = await crypto.subtle.exportKey("raw", masterKeyRef.current);
+
+      // 4. Mã hóa (Wrap) rawMasterKey bằng khóa KEK sinh trắc học (Dùng encryptRaw từ Phase 3!)
+      const wrapped = await AesGcmEngine.encryptRaw(rawMasterKey, prfSymmetricKey);
+
+      // 5. Cập nhật bảng meta trong IndexedDB
+      const currentMeta = await activeDb.meta.get(META_ID);
+      if (currentMeta) {
+        await activeDb.meta.put({
+          ...currentMeta,
+          biometricCredentialId: credentialId,
+          wrappedMasterKey: wrapped.cipherText,
+          wrappedKeyIv: wrapped.iv,
+        });
+
+        localStorage.setItem("ZERO_VAULT_BIOMETRIC_DB", vaultId);
+      }
+
+      return true;
+    } catch (err: any) {
+      setError(err.message || "Không thể kích hoạt mở khóa bằng sinh trắc học.");
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * [PHASE 4] MỞ KHÓA KÉT SẮT BẰNG VÂN TAY / FACEID (~50ms - Zero PBKDF2!)
+   */
+  const unlockWithBiometric = async (dbInstance: DynamicVaultDatabase): Promise<boolean> => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const meta = await dbInstance.meta.get(META_ID);
+      if (!meta || !meta.biometricCredentialId || !meta.wrappedMasterKey || !meta.wrappedKeyIv) {
+        throw new Error("Két sắt chưa được thiết lập mở khóa bằng sinh trắc học.");
+      }
+
+      // 1. Quét vân tay để lấy lại khóa KEK từ TPM
+      const prfSymmetricKey = await WebAuthnPrfEngine.authenticateBiometric(
+        meta.biometricCredentialId,
+      );
+
+      // 2. Giải mã (Unwrap) lấy lại Master Key nhị phân
+      const rawMasterKeyBuffer = await AesGcmEngine.decryptRaw(
+        { cipherText: meta.wrappedMasterKey, iv: meta.wrappedKeyIv },
+        prfSymmetricKey,
+      );
+
+      // 3. Re-import thành CryptoKey hợp lệ
+      const masterKey = await crypto.subtle.importKey(
+        "raw",
+        rawMasterKeyBuffer,
+        { name: "AES-GCM" },
+        false,
+        ["encrypt", "decrypt"],
+      );
+
+      // 4. Xác minh lại với Canary Verifier để đảm bảo an toàn tuyệt đối
+      const decryptedCanary = await AesGcmEngine.decrypt(
+        { cipherText: meta.canaryCipherText, iv: meta.canaryIv },
+        masterKey,
+      );
+      if (decryptedCanary !== CANARY_STRING) throw new Error("Canary Verifier mismatch!");
+
+      // 5. Mở khóa thành công! Nạp vào state
+      masterKeyRef.current = masterKey;
+      setActiveDb(dbInstance);
+      await fetchAndDecryptVault(masterKey, dbInstance);
+
+      return true;
+    } catch (err: any) {
+      setError(
+        err.message || "Mở khóa bằng sinh trắc học thất bại. Vui lòng dùng mật khẩu Master.",
+      );
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return {
     isUnlocked,
     isLoading,
@@ -298,5 +503,8 @@ export function useVault() {
     activeDb,
     vaultId,
     refreshVault,
+    changePassword,
+    enableBiometric,
+    unlockWithBiometric
   };
 }

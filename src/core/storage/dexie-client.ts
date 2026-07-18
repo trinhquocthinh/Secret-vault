@@ -26,6 +26,9 @@ export interface VaultMeta {
   salt: Uint8Array; // Salt dùng chung cho toàn bộ Két sắt
   canaryCipherText: ArrayBuffer; // Chuỗi "CANARY" đã bị mã hóa
   canaryIv: Uint8Array; // IV dùng để giải mã Canary
+  biometricCredentialId?: string;
+  wrappedMasterKey?: ArrayBuffer;
+  wrappedKeyIv?: Uint8Array;
 }
 
 export class DynamicVaultDatabase extends Dexie {

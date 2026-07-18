@@ -71,4 +71,43 @@ export class AesGcmEngine {
       );
     }
   }
+
+  /**
+   * Mã hóa trực tiếp một mảng nhị phân thô (ArrayBuffer) không đi qua TextEncoder.
+   * Phục vụ tối ưu cho Re-encryption / Key Rotation Pipeline.
+   */
+  public static async encryptRaw(
+    plainBuffer: BufferSource,
+    key: CryptoKey,
+  ): Promise<EncryptedPayload> {
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(IV_BYTE_LENGTH));
+
+    const cipherText = await globalThis.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      key,
+      plainBuffer, // <-- crypto.subtle tự động hiểu cả ArrayBuffer lẫn Uint8Array!
+    );
+
+    return { cipherText, iv };
+  }
+
+  /**
+   * Giải mã Ciphertext về lại ArrayBuffer thô trong RAM (KHÔNG decode sang string).
+   * Cho phép ứng dụng dùng MemoryWiper ghi đè 0x00 ngay sau khi sử dụng xong!
+   */
+  public static async decryptRaw(payload: EncryptedPayload, key: CryptoKey): Promise<ArrayBuffer> {
+    try {
+      const decryptedBuffer = await globalThis.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: payload.iv as BufferSource },
+        key,
+        payload.cipherText,
+      );
+      return decryptedBuffer;
+    } catch (error) {
+      throw new Error(
+        "Giải mã thất bại: Khóa không đúng hoặc dữ liệu đã bị can thiệp trái phép (Tampered Data).",
+        { cause: error },
+      );
+    }
+  }
 }

@@ -8,6 +8,7 @@ import { useAutoLock } from "../../security/hooks/useAutoLock";
 import { UnlockModal } from "../../auth/components/UnlockModal";
 import { QrScannerModal } from "../../totp/components/QrScannerModal";
 import { useVaultSync } from '../hooks/useVaultSync';
+import { ChangePasswordForm } from "./ChangePasswordForm";
 
 
 export const VaultDashboard: React.FC = () => {
@@ -25,9 +26,17 @@ export const VaultDashboard: React.FC = () => {
         activeDb,
         vaultId,
         refreshVault,
-        skippedRecordCount
+        skippedRecordCount,
+        changePassword,
+        unlockWithBiometric
     } = useVault();
-    const { copiedId, countdown, copyAndWipe } = useClipboardWiper();
+    const { copiedId, countdown, copyAndWipe } = useClipboardWiper({
+        onFirstCopyWarning: (msg) => {
+            // Bạn có thể dùng thư viện toast (như react-toastify, sonner) hoặc dùng browser alert:
+            alert(msg);
+            // Hoặc nếu có toast: toast.warning(msg, { duration: 6000 });
+        }
+    });
 
     // Tự động khóa app sau 5 phút không có thao tác chuột/bàn phím
     useAutoLock(lockVault, isUnlocked);
@@ -111,7 +120,7 @@ export const VaultDashboard: React.FC = () => {
     };
 
     if (!isUnlocked) {
-        return <UnlockModal onUnlock={unlockVault} isLoading={isLoading} error={error} />;
+        return <UnlockModal onUnlock={unlockVault} onBiometricUnlock={unlockWithBiometric} isLoading={isLoading} error={error} />;
     }
 
     return (
@@ -153,6 +162,11 @@ export const VaultDashboard: React.FC = () => {
 
             {/* Main Content */}
             <main className="mx-auto mt-8 max-w-4xl space-y-8 px-4">
+                <ChangePasswordForm
+                    changePassword={changePassword}
+                    isLoading={isLoading}
+                    vaultError={error}
+                />
                 {skippedRecordCount > 0 && (
                     <div className="rounded-xl border border-amber-700/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
                         ⚠️ Có {skippedRecordCount} bản ghi không thể giải mã (có thể do Mật khẩu Master
