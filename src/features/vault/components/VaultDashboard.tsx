@@ -1,5 +1,6 @@
 // src/features/vault/components/VaultDashboard.tsx
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useVault } from "../hooks/useVault";
 import { SecretCard } from "./SecretCard";
 import { SyncButton } from "./SyncButton";
@@ -50,6 +51,31 @@ export const VaultDashboard: React.FC = () => {
 
     // State điều khiển Modal Quét QR
     const [isScannerOpen, setIsScannerOpen] = useState(false);
+
+    const [searchQuery, setSearchQuery] = useState("");
+
+    // 2. ENGINE LỌC GẠN RECORD CHỐNG FREEZE (Tối ưu hóa bằng useMemo)
+    const filteredSecrets = useMemo(() => {
+        // Nếu secrets chưa được tải xong hoặc rỗng, trả về mảng trống ngay
+        if (!secrets || secrets.length === 0) return [];
+
+        const query = searchQuery.trim().toLowerCase();
+
+        // TRƯỜNG HỢP KHÔNG GÕ GÌ: Trả về toàn bộ danh sách gốc lập tức
+        if (!query) return secrets;
+
+        return secrets.filter((secret) => {
+            // Ép kiểu về chuỗi an toàn bằng Fallback || "" để chống lỗi undefined/null
+            const title = (secret.title || "").toLowerCase();
+            const username = (secret.username || "").toLowerCase();
+
+            // Kiểm tra khớp từ khóa
+            const titleMatch = title.includes(query);
+            const usernameMatch = username.includes(query);
+
+            return titleMatch || usernameMatch;
+        });
+    }, [secrets, searchQuery]);
 
     // Khi tải data mới từ Google Drive về, ta cần unlockVault lại bằng chính key đang có trong RAM để làm mới UI
     const handleSyncSuccess = useCallback(async () => {
@@ -174,6 +200,32 @@ export const VaultDashboard: React.FC = () => {
                         biết chi tiết, hoặc thử đăng nhập lại.
                     </div>
                 )}
+
+                {/* 3. COMPONENT SEARCH BAR (THIẾT KẾ GLASSMORPHISM SANG TRỌNG) */}
+                <div className="relative rounded-xl border border-slate-800/60 bg-slate-900/20 p-1 backdrop-blur-md focus-within:border-emerald-500/50 transition-all max-w-xl">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4 text-slate-500">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Tìm kiếm nhanh tài khoản, email hoặc dịch vụ..."
+                        className="w-full rounded-lg bg-transparent py-2.5 pl-10 pr-4 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none"
+                    />
+                    {searchQuery && (
+                        <button
+                            onClick={() => setSearchQuery("")}
+                            className="absolute inset-y-0 right-0 flex items-center pr-4 text-slate-500 hover:text-slate-300 text-xs transition-colors"
+                        >
+                            Xóa lọc
+                        </button>
+                    )}
+                </div>
+
+
                 {/* Form thêm bản ghi có tích hợp 2FA */}
                 <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
                     <h2 className="mb-4 text-base font-semibold text-white">Thêm tài khoản & Mã 2FA mới</h2>
@@ -239,26 +291,45 @@ export const VaultDashboard: React.FC = () => {
                     <h2 className="text-sm font-semibold tracking-wider text-slate-400 uppercase">
                         Danh sách đã lưu ({secrets.length})
                     </h2>
-                    {secrets.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-slate-800 py-12 text-center text-slate-500">
-                            Chưa có mật khẩu nào trong Két sắt. Hãy thêm bản ghi đầu tiên ở trên!
+                    {filteredSecrets.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-slate-800 p-12 text-center text-sm text-slate-600">
+                            📭 Không tìm thấy mật khẩu nào khớp với từ khóa của bạn.
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 gap-3">
-                            {secrets.map((item) => (
-                                <SecretCard
-                                    key={item.id}
-                                    item={item}
-                                    onCopyPassword={handleCopyPassword}
-                                    onCopyOTP={handleCopyOTP}
-                                    onGetPassword={getSecretPassword}
-                                    onUpdate={handleUpdateSecret}
-                                    onDelete={handleDeleteSecret}
-                                    isCopyingId={copiedId}
-                                    countdown={countdown}
-                                />
-                            ))}
-                        </div>
+                        // ĐIỂM CHẠM SENIOR: Bọc danh sách bằng motion.div và AnimatePresence
+                        <motion.div
+                            layout // Cưỡng chế kích hoạt thuật toán FLIP để các card tự trượt trơn tru sang vị trí mới
+                            className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+                        >
+                            <AnimatePresence mode="popLayout">
+                                {filteredSecrets.map((secret) => (
+                                    <motion.div
+                                        key={secret.id} // Rất quan trọng: key tĩnh không đổi để Framer Motion nhận diện
+                                        layout // Trượt mượt khi vị trí vật lý thay đổi
+                                        initial={{ opacity: 0, scale: 0.92 }}
+                                        animate={{ opacity: 1, scale: 1 }}
+                                        exit={{ opacity: 0, scale: 0.85, transition: { duration: 0.15 } }}
+                                        transition={{
+                                            type: "spring",
+                                            stiffness: 320,
+                                            damping: 30,
+                                            mass: 0.8
+                                        }}
+                                        className="origin-center"
+                                    >
+                                        <SecretCard
+                                            item={secret}
+                                            onCopyPassword={handleCopyPassword}
+                                            onCopyOTP={handleCopyOTP}
+                                            countdown={countdown}
+                                            onUpdate={handleUpdateSecret}
+                                            onDelete={handleDeleteSecret}
+                                            onGetPassword={getSecretPassword}
+                                            isCopyingId={copiedId} />
+                                    </motion.div>
+                                ))}
+                            </AnimatePresence>
+                        </motion.div>
                     )}
                 </div>
             </main>
