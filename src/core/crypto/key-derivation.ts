@@ -50,7 +50,12 @@ export class KeyDerivationEngine {
           name: "AES-GCM",
           length: KEY_LENGTH_BITS,
         },
-        false, // KHÔNG CHO PHÉP export khóa này ngược lại ra plaintext (Zero-Knowledge)
+        // PHẢI là extractable:true - tính năng mở khóa bằng Vân tay/FaceID (Phase 4) cần
+        // export raw bytes của khóa này để "wrap" (mã hóa) nó bằng KEK sinh trắc học
+        // (crypto.subtle.exportKey ném lỗi "key is not extractable" nếu để false).
+        // Khóa này KHÔNG BAO GIỜ bị ghi ra đĩa/localStorage ở dạng thô - chỉ tồn tại
+        // trong RAM và chỉ được export tạm thời để wrap trước khi bị garbage-collect.
+        true,
         ["encrypt", "decrypt"],
       );
 

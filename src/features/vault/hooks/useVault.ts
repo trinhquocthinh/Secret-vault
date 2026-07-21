@@ -414,6 +414,9 @@ export function useVault() {
       // 4. Mã hóa (Wrap) rawMasterKey bằng khóa KEK sinh trắc học (Dùng encryptRaw từ Phase 3!)
       const wrapped = await AesGcmEngine.encryptRaw(rawMasterKey, prfSymmetricKey);
 
+      // Xóa sạch bản sao nhị phân thô của Master Key khỏi RAM ngay sau khi đã wrap xong
+      MemoryWiper.wipe(new Uint8Array(rawMasterKey));
+
       // 5. Cập nhật bảng meta trong IndexedDB
       const currentMeta = await activeDb.meta.get(META_ID);
       if (currentMeta) {
@@ -501,14 +504,20 @@ export function useVault() {
         prfSymmetricKey,
       );
 
-      // 3. Re-import thành CryptoKey hợp lệ
+      // 3. Re-import thành CryptoKey hợp lệ.
+      // extractable:true (thay vì false) - để nếu người dùng bật lại sinh trắc học
+      // (enableBiometric) ngay trong phiên đang mở khóa bằng vân tay này, thao tác
+      // export/wrap Master Key vẫn hoạt động (không bị lỗi "key is not extractable").
       const masterKey = await crypto.subtle.importKey(
         "raw",
         rawMasterKeyBuffer,
         { name: "AES-GCM" },
-        false,
+        true,
         ["encrypt", "decrypt"],
       );
+
+      // Xóa sạch bản sao nhị phân thô của Master Key khỏi RAM ngay sau khi đã import xong
+      MemoryWiper.wipe(new Uint8Array(rawMasterKeyBuffer));
 
       // 4. Xác minh lại với Canary Verifier để đảm bảo an toàn tuyệt đối
       const decryptedCanary = await AesGcmEngine.decrypt(
