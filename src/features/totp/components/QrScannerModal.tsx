@@ -1,6 +1,8 @@
 // src/features/totp/components/QrScannerModal.tsx
 import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
+import { motion } from "framer-motion";
+import { AlertCircle, ScanLine, ShieldCheck, X } from "lucide-react";
 
 interface QrScannerModalProps {
   onScanSuccess: (totpSecret: string, accountLabel?: string) => void;
@@ -80,37 +82,56 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({ onScanSuccess, o
   }, [onScanSuccess, onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-bold text-white">Quét Mã QR 2FA (TOTP)</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-[0_0_40px_rgba(0,0,0,0.5)]"
+      >
+        <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+          <h3 className="flex items-center gap-2 text-lg font-bold text-white">
+            <ScanLine size={18} className="text-emerald-400" /> Quét Mã QR 2FA (TOTP)
+          </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white">
-            ✕
+            <X size={20} />
           </button>
         </div>
 
-        {error ? (
-          <div className="rounded-lg border border-rose-800 bg-rose-950/40 p-4 text-sm text-rose-300">
-            {error}
-          </div>
-        ) : (
-          <div className="relative aspect-square overflow-hidden rounded-lg border border-slate-700 bg-black">
-            <video ref={videoRef} className="h-full w-full object-cover" />
-            <canvas ref={canvasRef} className="hidden" />
-            {/* UI Khung quét nhắm mục tiêu */}
-            <div className="pointer-events-none absolute inset-8 flex animate-pulse items-center justify-center rounded-lg border-2 border-emerald-400/80">
-              <span className="rounded bg-slate-900/80 px-2 py-1 text-xs text-emerald-400">
-                Đưa mã QR vào khung
-              </span>
+        <div className="space-y-4 p-6">
+          {error ? (
+            <div className="flex items-start gap-2 rounded-lg border border-rose-800 bg-rose-950/40 p-4 text-sm text-rose-300">
+              <AlertCircle size={18} className="mt-0.5 shrink-0" />
+              <span>{error}</span>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="relative aspect-square overflow-hidden rounded-xl border border-slate-700 bg-black">
+              <video ref={videoRef} className="h-full w-full object-cover" />
+              <canvas ref={canvasRef} className="hidden" />
+              {/* UI Khung quét nhắm mục tiêu */}
+              <div className="pointer-events-none absolute inset-8 flex animate-pulse items-center justify-center rounded-lg border-2 border-emerald-400/80 shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                <span className="rounded bg-slate-900/80 px-2 py-1 text-xs text-emerald-400">
+                  Đưa mã QR vào khung
+                </span>
+              </div>
+            </div>
+          )}
 
-        <p className="text-center text-xs text-slate-400">
-          Dữ liệu video được xử lý 100% offline tại trình duyệt bằng jsQR, không gửi lên bất kỳ máy
-          chủ nào.
-        </p>
-      </div>
+          <p className="flex items-center justify-center gap-1.5 text-center text-xs text-slate-400">
+            <ShieldCheck size={14} className="text-emerald-500" />
+            Dữ liệu video được xử lý 100% offline tại trình duyệt bằng jsQR, không gửi lên bất kỳ
+            máy chủ nào.
+          </p>
+        </div>
+      </motion.div>
     </div>
   );
 };

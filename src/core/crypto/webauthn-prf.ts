@@ -56,42 +56,36 @@ export class WebAuthnPrfEngine {
         residentKey: "preferred",
       },
       extensions: {
-        // Yêu cầu chip TPM đánh giá PRF với Salt tĩnh của Zero-Vault
-        prf: {
-          eval: {
-            first: PRF_STATIC_SALT,
-          },
-        },
+        // Chỉ cần yêu cầu bật PRF Extension ở bước tạo Credential (create).
+        // LƯU Ý QUAN TRỌNG: Nhiều trình duyệt/nền tảng (đặc biệt Chrome & Safari trên macOS
+        // dùng Touch ID) KHÔNG trả về `results.first` ngay ở bước create() - chúng chỉ báo
+        // `enabled: true`. Giá trị PRF thực sự (dùng làm KEK) chỉ được trả về ở bước
+        // xác thực (get()) sau đó. Vì vậy ta không truyền `eval` ở đây và sẽ gọi
+        // `authenticateBiometric` ngay sau khi tạo xong Credential để lấy KEK thật.
+        prf: {},
       } as any,
     };
 
     const credential = (await navigator.credentials.create({ publicKey })) as PublicKeyCredential;
     if (!credential) throw new Error("Đăng ký sinh trắc học bị hủy hoặc thất bại.");
 
-    // Lấy chuỗi nhị phân PRF trả về từ extension
-    const extensionResults = credential.getClientExtensionResults() as any;
-    const prfOutput = extensionResults?.prf?.results?.first as ArrayBuffer;
-
-    if (!prfOutput) {
+    // Kiểm tra xem trình duyệt/thiết bị có thực sự bật PRF Extension hay không
+    const creationExtensionResults = credential.getClientExtensionResults() as any;
+    if (!creationExtensionResults?.prf?.enabled) {
       throw new Error(
-        "Trình duyệt hoặc phần cứng này không hỗ trợ tạo khóa tĩnh qua WebAuthn PRF Extension.",
+        "Trình duyệt hoặc phần cứng này không hỗ trợ WebAuthn PRF Extension (cần Chrome/Safari/Edge bản mới + Touch ID/Windows Hello).",
       );
     }
-
-    // Biến chuỗi PRF 32-byte thành CryptoKey (KEK) AES-GCM trong RAM
-    const prfSymmetricKey = await crypto.subtle.importKey(
-      "raw",
-      prfOutput,
-      { name: "AES-GCM" },
-      false, // Không cho phép extract ra khỏi RAM
-      ["encrypt", "decrypt"],
-    );
 
     // Chuyển credentialId thành chuỗi Base64URL để lưu xuống DB
     const credentialId = btoa(String.fromCharCode(...new Uint8Array(credential.rawId)))
       .replace(/\+/g, "-")
       .replace(/\//g, "_")
       .replace(/=/g, "");
+
+    // Xác thực lại NGAY LẬP TỨC (get()) để lấy giá trị PRF thực sự làm khóa KEK -
+    // đây là bước bắt buộc vì create() thường không trả eval.results ngay.
+    const prfSymmetricKey = await WebAuthnPrfEngine.authenticateBiometric(credentialId);
 
     return { credentialId, prfSymmetricKey };
   }

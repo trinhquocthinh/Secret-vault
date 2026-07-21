@@ -45,6 +45,7 @@ export function useVault() {
 
   const [activeDb, setActiveDb] = useState<DynamicVaultDatabase | null>(null);
   const [vaultId, setVaultId] = useState<string | null>(null);
+  const [isBiometricEnrolled, setIsBiometricEnrolled] = useState<boolean>(false);
   const masterKeyRef = useRef<CryptoKey | null>(null);
 
   const fetchAndDecryptVault = useCallback(
@@ -145,6 +146,7 @@ export function useVault() {
       setActiveDb(dbInstance);
       setVaultId(derivedVaultId);
       setIsUnlocked(true);
+      setIsBiometricEnrolled(!!meta?.biometricCredentialId);
 
       localStorage.removeItem("vault_attempts");
       localStorage.removeItem("vault_lockout");
@@ -188,6 +190,7 @@ export function useVault() {
     setSecrets([]);
     setSkippedRecordCount(0);
     setIsUnlocked(false);
+    setIsBiometricEnrolled(false);
   }, [activeDb]);
 
   const refreshVault = useCallback(async () => {
@@ -383,10 +386,11 @@ export function useVault() {
   /**
    * [PHASE 4] ĐĂNG KÝ VÂN TAY VÀ MÃ HÓA (WRAP) MASTER KEY
    */
-  const enableBiometric = async (): Promise<boolean> => {
+  const enableBiometric = async (): Promise<{ ok: boolean; message: string }> => {
     if (!masterKeyRef.current || !activeDb || !vaultId) {
-      setError("Két sắt phải đang mở khóa để kích hoạt sinh trắc học.");
-      return false;
+      const message = "Két sắt phải đang mở khóa để kích hoạt sinh trắc học.";
+      setError(message);
+      return { ok: false, message };
     }
 
     setIsLoading(true);
@@ -423,10 +427,51 @@ export function useVault() {
         localStorage.setItem("ZERO_VAULT_BIOMETRIC_DB", vaultId);
       }
 
-      return true;
+      setIsBiometricEnrolled(true);
+      return { ok: true, message: "Đã bật mở khóa bằng Vân tay/FaceID" };
     } catch (err: any) {
-      setError(err.message || "Không thể kích hoạt mở khóa bằng sinh trắc học.");
-      return false;
+      const message = err.message || "Không thể kích hoạt mở khóa bằng sinh trắc học.";
+      setError(message);
+      return { ok: false, message };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * [PHASE 4] HỦY KÍCH HOẠT MỞ KHÓA BẰNG VÂN TAY / FACEID
+   * Xóa sạch Credential + Master Key đã wrap khỏi meta để tránh còn sót dữ liệu nhạy cảm.
+   */
+  const disableBiometric = async (): Promise<{ ok: boolean; message: string }> => {
+    if (!activeDb || !vaultId) {
+      const message = "Két sắt phải đang mở khóa để hủy sinh trắc học.";
+      setError(message);
+      return { ok: false, message };
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const currentMeta = await activeDb.meta.get(META_ID);
+      if (currentMeta) {
+        const { biometricCredentialId, wrappedMasterKey, wrappedKeyIv, ...restMeta } = currentMeta;
+        void biometricCredentialId;
+        void wrappedMasterKey;
+        void wrappedKeyIv;
+        await activeDb.meta.put(restMeta as VaultMeta);
+      }
+
+      if (localStorage.getItem("ZERO_VAULT_BIOMETRIC_DB") === vaultId) {
+        localStorage.removeItem("ZERO_VAULT_BIOMETRIC_DB");
+      }
+
+      setIsBiometricEnrolled(false);
+      return { ok: true, message: "Đã tắt mở khóa bằng Vân tay/FaceID" };
+    } catch (err: any) {
+      const message = err.message || "Không thể hủy kích hoạt sinh trắc học.";
+      setError(message);
+      return { ok: false, message };
     } finally {
       setIsLoading(false);
     }
@@ -504,7 +549,9 @@ export function useVault() {
     vaultId,
     refreshVault,
     changePassword,
+    isBiometricEnrolled,
     enableBiometric,
-    unlockWithBiometric
+    disableBiometric,
+    unlockWithBiometric,
   };
 }

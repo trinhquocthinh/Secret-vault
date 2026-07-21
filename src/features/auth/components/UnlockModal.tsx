@@ -1,10 +1,12 @@
 // src/features/auth/components/UnlockModal.tsx
 import React, { useEffect, useState } from "react";
-import { DynamicVaultDatabase } from "../../../core/storage/dexie-client"; // Sửa lại đường dẫn nếu khác
+import { motion } from "framer-motion";
+import { Fingerprint, KeyRound, ShieldCheck } from "lucide-react";
+import { DynamicVaultDatabase } from "../../../core/storage/dexie-client";
+import { useBiometric } from "../hooks/useBiometric";
 
 interface UnlockModalProps {
   onUnlock: (password: string) => Promise<boolean>;
-  // Bổ sung Prop để nhận hàm vân tay từ Hook
   onBiometricUnlock?: (dbInstance: DynamicVaultDatabase) => Promise<boolean>;
   isLoading: boolean;
   error: string | null;
@@ -12,47 +14,30 @@ interface UnlockModalProps {
 
 export const UnlockModal: React.FC<UnlockModalProps> = ({
   onUnlock,
-  onBiometricUnlock, // Nhận hàm từ Component cha
-  isLoading,
-  error
+  onBiometricUnlock,
+  isLoading: isParentLoading,
+  error: parentError,
 }) => {
   const [password, setPassword] = useState("");
-  const [hasBiometric, setHasBiometric] = useState(false);
   const [biometricDb, setBiometricDb] = useState<DynamicVaultDatabase | null>(null);
 
-  // Xử lý kiểm tra vân tay mượt mà, không dính lỗi ESLint
+  // Sử dụng Hook useBiometric
+  const {
+    hasBiometric,
+    isLoading: isBioLoading,
+    error: bioError,
+    checkBiometricStatus,
+    verifyBiometric,
+  } = useBiometric();
+
   useEffect(() => {
-    let isMounted = true;
-
-    const checkBiometric = async () => {
-      // 1. Đọc tên Két sắt đã lưu từ localStorage
-      const savedDbName = localStorage.getItem("ZERO_VAULT_BIOMETRIC_DB");
-      if (!savedDbName) return;
-
-      try {
-        // 2. Mở kết nối tạm tới Database đó để kiểm tra
-        const tempDb = new DynamicVaultDatabase(savedDbName);
-        await tempDb.open();
-        const meta = await tempDb.meta.get("ZERO_VAULT_META");
-
-        // 3. Nếu cấu hình vân tay hợp lệ -> Bật UI
-        if (isMounted && meta && meta.biometricCredentialId) {
-          setHasBiometric(true);
-          setBiometricDb(tempDb); // Giữ lại connection để dùng khi click mở khóa
-        } else {
-          tempDb.close();
-        }
-      } catch (err) {
-        console.warn("Chưa thể tải trạng thái sinh trắc học:", err);
-      }
+    // Tự động tải connection DB khi mount
+    const initDb = async () => {
+      const db = await checkBiometricStatus();
+      if (db) setBiometricDb(db);
     };
-
-    checkBiometric();
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+    initDb();
+  }, [checkBiometricStatus]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,70 +47,84 @@ export const UnlockModal: React.FC<UnlockModalProps> = ({
   };
 
   const handleBiometricClick = async () => {
-    if (onBiometricUnlock && biometricDb) {
+    if (!biometricDb) return;
+
+    // 1. Xác thực qua hệ điều hành (TouchID/FaceID)
+    const isVerified = await verifyBiometric(biometricDb);
+
+    // 2. Nếu quét thành công, gọi callback mở két từ Component cha
+    if (isVerified && onBiometricUnlock) {
       await onBiometricUnlock(biometricDb);
     }
   };
 
+  const isLoading = isParentLoading || isBioLoading;
+  const displayError = parentError || bioError;
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4">
-      <div className="w-full max-w-md rounded-xl border border-slate-800 bg-slate-900 p-8 shadow-2xl">
-        <div className="mb-6 text-center">
-          <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">
-            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0a0a0a] p-4">
+      <div className="pointer-events-none absolute top-1/2 left-1/2 h-150 w-150 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500/10 blur-[120px]" />
+
+      <motion.div
+        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        className="relative z-10 w-full max-w-md rounded-3xl border border-slate-800/80 bg-slate-900/60 p-8 shadow-[0_0_40px_rgba(16,185,129,0.1)] backdrop-blur-xl"
+      >
+        <div className="mb-8 flex flex-col items-center">
+          <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-[0_0_20px_rgba(16,185,129,0.4)]">
+            <ShieldCheck size={32} className="text-slate-950" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Zero-Knowledge Vault</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Nhập Master Password để giải mã bộ nhớ cục bộ
+          <h1 className="text-2xl font-bold tracking-tight text-white">Vùng bảo mật</h1>
+          <p className="mt-2 text-center text-sm text-slate-400">
+            Lưu trữ mật mã học cấp quân sự. Không ai ngoài bạn có thể đọc được dữ liệu này.
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-xs font-semibold tracking-wider text-slate-400 uppercase">
-              Master Password
-            </label>
+          <div className="relative">
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-4">
+              <KeyRound size={18} className="text-slate-500" />
+            </div>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Nhập mật khẩu chính..."
-              className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white transition-all focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+              placeholder="Nhập mật khẩu chủ..."
               autoFocus
+              className="w-full rounded-xl border border-slate-700 bg-slate-950/50 py-3.5 pr-4 pl-12 text-white transition-all placeholder:text-slate-600 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50 focus:outline-none"
             />
           </div>
 
-          {error && (
+          {displayError && (
             <div className="rounded-md border border-rose-900/50 bg-rose-950/30 p-3 text-xs text-rose-400">
-              {error}
+              {displayError}
             </div>
           )}
 
           <button
             type="submit"
             disabled={isLoading || !password}
-            className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white transition-colors hover:bg-emerald-500 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 focus:ring-offset-slate-900 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 py-3.5 font-semibold text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all hover:from-emerald-400 hover:to-emerald-500 hover:shadow-[0_0_25px_rgba(16,185,129,0.5)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isLoading ? "Đang xử lý khóa mật mã..." : "Mở Khóa Két Sắt"}
+            {isLoading ? "Đang xử lý khóa mật mã..." : "Giải mã Két sắt"}
           </button>
         </form>
 
-        {/* Nút bấm Vân Tay đã được sửa lại an toàn */}
+        {/* Nút bấm tự động hiện lên khi hasBiometric = true */}
         {hasBiometric && (
-          <div className="mt-4 border-t border-slate-800 pt-4">
+          <div className="mt-6 border-t border-slate-800 pt-6">
             <button
               type="button"
               onClick={handleBiometricClick}
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition-all shadow-lg shadow-indigo-500/20 border border-indigo-500/30 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/30 bg-transparent py-3 font-medium text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.1)] transition-all hover:bg-emerald-500/10 hover:shadow-[0_0_20px_rgba(16,185,129,0.2)] active:scale-[0.98] disabled:opacity-50"
             >
-              <span className="text-lg">👆</span> Mở khóa nhanh bằng Vân tay / FaceID
+              <Fingerprint size={20} className={isBioLoading ? "animate-pulse" : ""} />
+              {isBioLoading ? "Đang chờ xác thực..." : "Mở khóa bằng Vân tay / FaceID"}
             </button>
           </div>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 };

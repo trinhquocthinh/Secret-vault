@@ -1,15 +1,26 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 Phút
+const INACTIVITY_TIMEOUT_SECONDS = INACTIVITY_TIMEOUT_MS / 1000;
 
 export function useAutoLock(onLock: () => void, isUnlocked: boolean) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Giây còn lại trước khi tự khóa - dùng để hiển thị đồng hồ đếm ngược trên UI
+  const [remainingSeconds, setRemainingSeconds] = useState(INACTIVITY_TIMEOUT_SECONDS);
 
   useEffect(() => {
     if (!isUnlocked) return;
 
     const resetTimer = () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+
+      setRemainingSeconds(INACTIVITY_TIMEOUT_SECONDS);
+      intervalRef.current = setInterval(() => {
+        setRemainingSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+
       timerRef.current = setTimeout(() => {
         onLock();
       }, INACTIVITY_TIMEOUT_MS);
@@ -23,7 +34,10 @@ export function useAutoLock(onLock: () => void, isUnlocked: boolean) {
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (intervalRef.current) clearInterval(intervalRef.current);
       events.forEach((event) => window.removeEventListener(event, resetTimer));
     };
   }, [isUnlocked, onLock]);
+
+  return { remainingSeconds };
 }
