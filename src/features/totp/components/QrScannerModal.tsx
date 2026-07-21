@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import jsQR from "jsqr";
 import { motion } from "framer-motion";
-import { AlertCircle, ScanLine, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, Camera, ShieldCheck, X } from "lucide-react";
 
 interface QrScannerModalProps {
   onScanSuccess: (totpSecret: string, accountLabel?: string) => void;
@@ -99,7 +99,7 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({ onScanSuccess, o
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
           <h3 className="flex items-center gap-2 text-lg font-bold text-white">
-            <ScanLine size={18} className="text-emerald-400" /> Quét Mã QR 2FA (TOTP)
+            <Camera size={18} className="text-emerald-400" /> Quét mã QR 2FA
           </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white">
             <X size={20} />
@@ -113,15 +113,21 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({ onScanSuccess, o
               <span>{error}</span>
             </div>
           ) : (
-            <div className="relative aspect-square overflow-hidden rounded-xl border border-slate-700 bg-black">
-              <video ref={videoRef} className="h-full w-full object-cover" />
+            <div className="relative flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-slate-700 bg-black">
+              <video ref={videoRef} className="absolute inset-0 h-full w-full object-cover" />
               <canvas ref={canvasRef} className="hidden" />
-              {/* UI Khung quét nhắm mục tiêu */}
-              <div className="pointer-events-none absolute inset-8 flex animate-pulse items-center justify-center rounded-lg border-2 border-emerald-400/80 shadow-[0_0_20px_rgba(16,185,129,0.3)]">
-                <span className="rounded bg-slate-900/80 px-2 py-1 text-xs text-emerald-400">
-                  Đưa mã QR vào khung
-                </span>
+
+              {/* Khung nhắm mục tiêu + vignette làm tối phần ngoài khung quét */}
+              <div className="pointer-events-none relative z-10 flex h-56 w-56 flex-col overflow-hidden rounded-xl border-2 border-emerald-400 shadow-[0_0_0_9999px_rgba(0,0,0,0.6)]">
+                <motion.div
+                  animate={{ y: [0, 224, 0] }}
+                  transition={{ repeat: Infinity, duration: 2.5, ease: "linear" }}
+                  className="h-0.5 w-full bg-emerald-400 shadow-[0_0_15px_#34d399]"
+                />
               </div>
+              <p className="pointer-events-none absolute bottom-8 z-20 rounded-full bg-black/50 px-4 py-2 text-sm font-medium text-emerald-400 backdrop-blur-md">
+                Đưa mã QR 2FA vào giữa khung hình
+              </p>
             </div>
           )}
 

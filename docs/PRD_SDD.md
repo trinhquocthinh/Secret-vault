@@ -1,17 +1,19 @@
 # 📋 PRODUCT REQUIREMENTS DOCUMENT (PRD) & SPEC-DRIVEN DEVELOPMENT (SDD)
 
-* **Tên sản phẩm:** Zero-Vault (Enterprise Zero-Knowledge Password & 2FA Manager)
-* **Phiên bản:** 1.1.0 (đối chiếu & đồng bộ hóa với source code thực tế)
+* **Tên sản phẩm:** Zero-Vault (Enterprise Zero-Knowledge Password & 2FA Manager) — UI hiển thị với
+  tên thương hiệu **"Vùng bảo mật"**
+* **Phiên bản:** 1.2.0 (đối chiếu & đồng bộ hóa với source code thực tế)
 * **Phân loại:** Local-First Offline-Capable Web Application *(chưa đóng gói PWA — xem NFR-02)*
 * **Tác giả:** Principal Systems Architect & Security Engineer
-* **Ngày phê duyệt:** 2026
+* **Ngày phê duyệt:** 2026 (bản 1.2.0 cập nhật 2026-07-21)
 * **Trạng thái triển khai:** Xem cột **Trạng thái** trong mỗi mục FR/NFR bên dưới và §6 để biết khoảng cách
   giữa yêu cầu và implementation thực tế. Chi tiết kỹ thuật đầy đủ: [`docs/TECH_SPEC.md`](./TECH_SPEC.md).
 
-> **Ghi chú về tính chính xác:** Bản 1.1.0 đã được rà soát trực tiếp với source code trong `src/` (không
-> chỉ dựa trên tài liệu cũ). Các yêu cầu vẫn giữ nguyên như mục tiêu sản phẩm (PRD mô tả "nên là gì"), nhưng
-> mỗi mục được gắn nhãn trạng thái ✅ Đã triển khai / ⚠️ Triển khai một phần / ❌ Chưa triển khai để tài liệu
-> không bị hiểu nhầm là toàn bộ đã hoàn thiện 100%.
+> **Ghi chú về tính chính xác:** Bản 1.2.0 cập nhật so với 1.1.0: (1) UI đã được redesign toàn bộ bằng
+> Tailwind CSS v4 + `lucide-react` + `framer-motion` và rebrand hiển thị thành "Vùng bảo mật", (2) thêm
+> **FR-01.3 Mở khóa sinh trắc học (WebAuthn PRF)** và **FR-06 Đổi Master Password (Key Rotation)** — hai
+> tính năng hoàn toàn mới chưa từng được đặc tả ở bản 1.1.0, (3) FR-05.3 Tombstone GC được nâng từ ❌ lên
+> ⚠️ vì nay đã có một phần (chạy kèm theo luồng đổi mật khẩu).
 
 ---
 
@@ -55,6 +57,7 @@ Dự án áp dụng mô hình đe dọa STRIDE và thiết lập ma trận phòn
 
 * **FR-01.1** ✅ — Hệ thống phải sử dụng thuật toán **PBKDF2** với **600,000 vòng lặp** (chuẩn OWASP 2026), kết hợp Salt ngẫu nhiên 16-byte để dẫn xuất ra Khóa chính (`CryptoKey` 256-bit). *(`core/crypto/key-derivation.ts`)*
 * **FR-01.2** ✅ — Hệ thống phải tích hợp cơ chế **"Canary Verifier"** (Huy hiệu xác thực hoàng yến). Khi tạo Két sắt, hệ thống mã hóa một chuỗi hằng số cố định (implementation dùng `"ZERO_KNOWLEDGE_VAULT_VALID_CANARY"`) và lưu vào bảng `meta` (`canaryCipherText`/`canaryIv`). Khi mở khóa, hệ thống thử giải mã Canary; nếu giải mã thành công mới mở giao diện, nếu thất bại phải từ chối ngay ở tầng Client. *(`useVault.unlockVault`, xem TECH_SPEC §2.4)*
+* **FR-01.3 (Mở khóa sinh trắc học)** ✅ — Hệ thống phải cho phép người dùng bật tùy chọn mở khóa bằng Touch ID / Face ID / Windows Hello (chuẩn **WebAuthn PRF Extension**) như một lớp tiện lợi bổ sung, KHÔNG thay thế Master Password. Khóa PRF phái sinh từ authenticator dùng để bọc (wrap/unwrap) Master Key đã dẫn xuất — Master Key không bao giờ được lưu trữ dưới dạng plaintext, và Canary Verifier vẫn được xác minh lại sau khi mở khóa bằng sinh trắc học. *(`core/crypto/webauthn-prf.ts`, `useVault.enableBiometric`/`disableBiometric`/`unlockWithBiometric`, xem TECH_SPEC §2.6)*
 
 ### FR-02: Quản lý Két Sắt Mật Khẩu (Vault CRUD Operations)
 
@@ -67,6 +70,7 @@ Dự án áp dụng mô hình đe dọa STRIDE và thiết lập ma trận phòn
 * **FR-03.1** ✅ — Tích hợp thư viện `jsQR` để quét mã QR 2FA trực tiếp qua Camera của thiết bị 100% offline. *(Lưu ý: hiện chỉ hỗ trợ quét qua luồng Camera trực tiếp — quét từ ảnh chụp màn hình tĩnh do người dùng tải lên chưa có UI riêng.)*
 * **FR-03.2** ✅ — Tự xây dựng engine tính toán mã OTP 6 chữ số theo chuẩn **RFC 6238** (Time-based One-Time Password) dựa trên hàm băm `HMAC-SHA1` và bước nhảy thời gian `X = 30s`. Toàn bộ quá trình băm và cắt bit động (Dynamic Truncation) chạy offline trên RAM. *(`core/crypto/totp-engine.ts`)*
 * **FR-03.3** ✅ — Hiển thị thanh tiến trình đếm ngược thời gian thực và đồng bộ hóa làm mới mã OTP theo đúng nhịp đồng hồ hệ thống mà không gây ra lỗi re-render liên hoàn (Zero Cascading Renders). *(`useLiveTOTP`)*
+* **FR-03.4 (Validate TOTP secret trước khi lưu)** ✅ — Hệ thống phải từ chối lưu một bản ghi có TOTP secret không phải Base32 hợp lệ (chặn ngay tại form Thêm/Sửa bằng toast lỗi), thay vì lưu một secret hỏng rồi mới báo lỗi khi tính OTP (tránh hiển thị chuỗi vô nghĩa kiểu cắt lát ký tự lỗi cho người dùng cuối). *(`TotpEngine.isValidBase32Secret`, `VaultDashboard.handleSaveSecret`, `useLiveTOTP`'s `isOtpReady`)*
 
 ### FR-04: Tự Động Hóa Bảo Vệ Hệ Thống (Automated Security Guardrails)
 
@@ -77,7 +81,11 @@ Dự án áp dụng mô hình đe dọa STRIDE và thiết lập ma trận phòn
 
 * **FR-05.1** ✅ — Tích hợp xác thực ngầm (Silent OAuth2 Flow) qua Google Identity Services để lấy Token kết nối với Google Drive REST API v3 mà không gây làm phiền bằng pop-up liên tục. Khi đồng bộ ngầm (không phải do user bấm nút) chưa có token sẵn, hệ thống chủ động bỏ qua thay vì cố mở popup (tránh bị trình duyệt chặn). *(xem TECH_SPEC §5)*
 * **FR-05.2** ✅ — Đồng bộ hóa file bảo mật vào vùng nhớ ẩn `drive.appdata` và thực hiện giải thuật gộp dữ liệu **Last-Write-Wins (LWW)** cấp bản ghi dựa trên timestamp để giải quyết xung đột khi sửa đổi trên nhiều thiết bị. Bổ sung so với bản PRD gốc: một giao thức **"Nhận nuôi Salt" (Salt Adoption + Forced Relogin)** xử lý đúng trường hợp lần đồng bộ đầu tiên trên thiết bị hoàn toàn mới (xem TECH_SPEC §4.2).
-* **FR-05.3** ❌ **Chưa triển khai** — Tự động chạy **Tombstone Garbage Collection**: Xóa vĩnh viễn (Hard Delete) các bản ghi có cờ `isDeleted: true` đã offline hoặc quá hạn trên **30 ngày** khỏi cả Local DB và file đám mây nhằm tối ưu hóa dung lượng lưu trữ. Hiện tại tombstone tồn tại **vĩnh viễn**, không có cơ chế dọn dẹp tự động nào chạy — đây là một hạng mục backlog rõ ràng, không phải một tính năng đã hoàn thiện (xem TECH_SPEC §4.1, §8).
+* **FR-05.3** ❌ **Chưa triển khai (tổng quát)** — Tự động chạy **Tombstone Garbage Collection** trên mọi lần đồng bộ Cloud: Xóa vĩnh viễn (Hard Delete) các bản ghi có cờ `isDeleted: true` đã quá hạn trên **30 ngày** khỏi cả Local DB và file đám mây nhằm tối ưu hóa dung lượng lưu trữ. Hiện tại, luồng đồng bộ Google Drive thông thường (`vault-sync-engine.ts`) KHÔNG có bước dọn dẹp này — tombstone tồn tại **vĩnh viễn** trên đường đồng bộ. Một phần của yêu cầu này ĐÃ được giải quyết gián tiếp: đổi Master Password (FR-06 bên dưới) hiện có lọc bỏ tombstone quá hạn 30 ngày như một side-effect của việc migrate toàn bộ dữ liệu — nhưng đây không phải giải pháp tổng quát vì phụ thuộc vào việc người dùng chủ động đổi mật khẩu (xem TECH_SPEC §3.5, §4.1, §8).
+
+### FR-06: Đổi Master Password / Xoay Vòng Khóa (Change Password / Key Rotation)
+
+* **FR-06.1** ✅ — Hệ thống phải cho phép người dùng đổi Master Password mà không mất dữ liệu: xác minh mật khẩu cũ, sinh Salt + Canary mới, giải mã toàn bộ record bằng khóa cũ rồi mã hóa lại bằng khóa mới với IV mới cho mỗi bản ghi (không tái sử dụng cặp Key+IV), migrate sang một IndexedDB có tên mới (vì tên DB dẫn xuất tất định từ mật khẩu), và xóa vật lý DB cũ khỏi ổ đĩa. *(`ChangePasswordForm.tsx`, `useVault.changePassword`, `core/storage/vault-migration-engine.ts`, xem TECH_SPEC §3.5)*
 
 ---
 
@@ -86,6 +94,7 @@ Dự án áp dụng mô hình đe dọa STRIDE và thiết lập ma trận phòn
 * **NFR-01 (Hiệu năng)** ⚠️ Chưa có benchmark tự động — Thời gian mở khóa Két sắt (thực hiện 600,000 vòng lặp PBKDF2) được kỳ vọng không vượt quá **500ms** trên các thiết bị trung bình, và thời gian giải mã một bản ghi trong chế độ Lazy Decryption dưới **10ms**. Các con số này phù hợp với chi phí lý thuyết của PBKDF2-SHA256/600k trên phần cứng hiện đại, nhưng **chưa có một bài test hiệu năng tự động** (benchmark/CI) nào đo và khẳng định lại 2 ngưỡng này trong repo.
 * **NFR-02 (Độ tin cậy & Offline)** ⚠️ Triển khai một phần — Nhờ kiến trúc Local-First (IndexedDB), ứng dụng **đã** hoạt động 100% đầy đủ tính năng CRUD và xem mã 2FA ngay cả khi ngắt kết nối Internet hoàn toàn (đồng bộ Cloud chỉ là lớp phụ trợ). Tuy nhiên yêu cầu "**đóng gói theo chuẩn PWA**" (installable, `manifest.json`, service worker, add-to-homescreen) **chưa được triển khai** — không có `vite-plugin-pwa`, không có manifest, `public/` chỉ có icon tĩnh. Xem TECH_SPEC §8.
 * **NFR-03 (Bảo mật đường truyền & Host)** ✅ Đã triển khai (có lệch nhẹ dev/prod) — Tuân thủ chính sách **Content-Security-Policy (CSP)** và **Cross-Origin-Opener-Policy (COOP)** khắt khe để chống Clickjacking và tấn công thực thi mã chéo trang (XSS), cấu hình song song ở `index.html` (meta tag, áp dụng cả dev) và `vercel.json` (HTTP headers, chỉ áp dụng khi deploy Vercel). Hai lớp này hiện lệch nhẹ (`object-src`/`base-uri`/`form-action` chỉ có ở `vercel.json`) — xem TECH_SPEC §6 để biết chi tiết & khuyến nghị đồng bộ.
+* **NFR-04 (Giao diện & Trải nghiệm người dùng)** ✅ Đã triển khai — Toàn bộ UI được redesign bằng Tailwind CSS v4 (pipeline thật qua `@tailwindcss/vite`, không cần `tailwind.config.js`), icon từ `lucide-react`, hiệu ứng chuyển động từ `framer-motion`, cùng bộ Toast/Modal dùng chung ở `shared/components`. Đây là gap trước đây (bản 1.1.0 flag Tailwind là ⚠️ "component dùng class name Tailwind nhưng không có pipeline thật") nay đã được đóng.
 
 ---
 
@@ -96,20 +105,24 @@ mà không cần đọc lại toàn bộ TECH_SPEC:
 
 | Yêu cầu | Trạng thái | Ghi chú ngắn |
 | --- | --- | --- |
-| FR-01.1 PBKDF2 600k + salt 16-byte | ✅ | Khớp 100% |
+| FR-01.1 PBKDF2 600k + salt 16-byte | ✅ | Khớp 100%, nay chạy trong Web Worker riêng (TECH_SPEC §2.1) |
 | FR-01.2 Canary Verifier | ✅ | Chuỗi canary thực tế khác 1 chữ so với PRD gốc (`_VALID_CANARY`) |
+| FR-01.3 Biometric Unlock (WebAuthn PRF) | ✅ | Tính năng mới — wrap/unwrap Master Key bằng khóa PRF, Canary vẫn được xác minh lại |
 | FR-02.1 CRUD | ✅ | Khớp |
 | FR-02.2 Lazy Decryption | ⚠️ | Chỉ `password` là lazy thật; metadata + TOTP secret giải mã eager lúc unlock |
 | FR-02.3 Tombstone Soft Delete | ✅ | Khớp, đã có regression test |
-| FR-03.1–3.3 TOTP/QR | ✅ | Khớp |
+| FR-03.1–3.3 TOTP/QR | ✅ | Khớp; đã bổ sung `isValidBase32Secret()` chặn lưu secret không hợp lệ + `isOtpReady` chống hiển thị lỗi kiểu "ERR OR" |
+| FR-03.4 Validate Base32 secret trước khi lưu | ✅ | Tính năng mới, chặn tại form Thêm/Sửa bằng toast lỗi |
 | FR-04.1 Clipboard Wiper | ✅ | Ghi `" "` thay vì `""` |
-| FR-04.2 Auto-Lock | ✅ | Khớp |
+| FR-04.2 Auto-Lock | ✅ | Khớp; đã sửa lỗi đồng hồ đếm ngược bị reset liên tục (stale closure trong `useAutoLock.ts`) |
 | FR-05.1 Silent OAuth2 | ✅ | Có thêm phân biệt interactive/non-interactive để tránh popup bị chặn |
 | FR-05.2 LWW Sync | ✅ | Có thêm giao thức Salt Adoption chưa từng được đặc tả trước đây |
-| FR-05.3 Tombstone GC (30 ngày) | ❌ | **Chưa implement** — cần đưa vào backlog |
+| FR-05.3 Tombstone GC (30 ngày) | ⚠️ | Chỉ chạy như side-effect của FR-06 (đổi mật khẩu); đồng bộ Drive thường vẫn không GC |
+| FR-06.1 Đổi Master Password / Key Rotation | ✅ | Tính năng mới — re-encrypt toàn bộ vault, migrate DB, xóa DB cũ (TECH_SPEC §3.5) |
 | NFR-01 Hiệu năng (500ms/10ms) | ⚠️ | Chưa có benchmark tự động xác nhận |
 | NFR-02 PWA Offline Packaging | ⚠️ | Offline-first đã có; PWA installable thì chưa |
 | NFR-03 CSP/COOP | ✅ | Có lệch nhẹ dev/prod, xem TECH_SPEC §6 |
+| NFR-04 Styling pipeline (Tailwind CSS v4) | ✅ | Trước đây bị flag là gap (không có build pipeline thật); nay đã wire đầy đủ qua `@tailwindcss/vite` |
 
 Các dòng ❌/⚠️ nên được chuyển thành issue cụ thể trong backlog trước khi công bố phiên bản kế tiếp là
 "Production/GA".

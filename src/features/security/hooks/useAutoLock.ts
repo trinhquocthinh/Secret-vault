@@ -9,6 +9,16 @@ export function useAutoLock(onLock: () => void, isUnlocked: boolean) {
   // Giây còn lại trước khi tự khóa - dùng để hiển thị đồng hồ đếm ngược trên UI
   const [remainingSeconds, setRemainingSeconds] = useState(INACTIVITY_TIMEOUT_SECONDS);
 
+  // Luôn giữ bản mới nhất của onLock trong ref thay vì đưa thẳng vào dependency
+  // array của effect bên dưới. Nếu không, vì remainingSeconds cập nhật mỗi giây
+  // khiến component cha re-render và tạo ra một hàm onLock MỚI mỗi lần, effect
+  // sẽ bị hủy + chạy lại liên tục -> resetTimer() bị gọi lại mỗi giây -> đồng hồ
+  // luôn bị kéo về lại 5:00 dù người dùng không hề tương tác (bug đã gặp phải).
+  const onLockRef = useRef(onLock);
+  useEffect(() => {
+    onLockRef.current = onLock;
+  }, [onLock]);
+
   useEffect(() => {
     if (!isUnlocked) return;
 
@@ -22,7 +32,7 @@ export function useAutoLock(onLock: () => void, isUnlocked: boolean) {
       }, 1000);
 
       timerRef.current = setTimeout(() => {
-        onLock();
+        onLockRef.current();
       }, INACTIVITY_TIMEOUT_MS);
     };
 
@@ -37,7 +47,7 @@ export function useAutoLock(onLock: () => void, isUnlocked: boolean) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       events.forEach((event) => window.removeEventListener(event, resetTimer));
     };
-  }, [isUnlocked, onLock]);
+  }, [isUnlocked]);
 
   return { remainingSeconds };
 }

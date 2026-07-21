@@ -61,7 +61,10 @@ export const useBiometric = () => {
     try {
       const tempDb = new DynamicVaultDatabase(savedDbName);
       await tempDb.open();
-      const meta = await tempDb.meta.get("ZERO_VAULT_META");
+      // Phải trùng với META_ID ("VAULT_CONFIG") dùng xuyên suốt ứng dụng (useVault.ts,
+      // dexie-client.ts) - trước đây dùng nhầm "ZERO_VAULT_META" (không bao giờ tồn tại)
+      // khiến hasBiometric luôn bằng false dù đã bật sinh trắc học thành công.
+      const meta = await tempDb.meta.get("VAULT_CONFIG");
 
       if (meta && meta.biometricCredentialId) {
         return { db: tempDb, hasBiometric: true };
@@ -137,8 +140,10 @@ export const useBiometric = () => {
 
       const credentialId = bufferToBase64(credential.rawId);
 
+      const currentMeta = await dbInstance.meta.get("VAULT_CONFIG");
       await dbInstance.meta.put({
-        id: "ZERO_VAULT_META",
+        ...currentMeta,
+        id: "VAULT_CONFIG",
         biometricCredentialId: credentialId,
       } as any);
 
@@ -160,7 +165,7 @@ export const useBiometric = () => {
     setError(null);
 
     try {
-      const meta = await dbInstance.meta.get("ZERO_VAULT_META");
+      const meta = await dbInstance.meta.get("VAULT_CONFIG");
       if (!meta || !meta.biometricCredentialId) {
         throw new Error("Chưa cấu hình sinh trắc học cho Két sắt này.");
       }
@@ -201,7 +206,7 @@ export const useBiometric = () => {
   // 5. HỦY KÍCH HOẠT SINH TRẮC HỌC
   const disableBiometric = async (dbInstance: DynamicVaultDatabase): Promise<void> => {
     try {
-      const meta = await dbInstance.meta.get("ZERO_VAULT_META");
+      const meta = await dbInstance.meta.get("VAULT_CONFIG");
       if (meta) {
         delete meta.biometricCredentialId;
         await dbInstance.meta.put(meta);

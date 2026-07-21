@@ -7,6 +7,7 @@ import {
   Lock,
   LogOut,
   Plus,
+  QrCode,
   Search,
   Settings,
   ShieldCheck,
@@ -14,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useVault, type SecretItem } from "../hooks/useVault";
+import { TotpEngine } from "../../../core/crypto/totp-engine";
 import { SecretCard } from "./SecretCard";
 import { SyncButton } from "./SyncButton";
 import { useClipboardWiper } from "../hooks/useClipboardWiper";
@@ -211,6 +213,16 @@ export const VaultDashboard: React.FC = () => {
   const handleSaveSecret = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title || !password) return;
+
+    const trimmedTotp = totpSecret.trim();
+    if (trimmedTotp && !TotpEngine.isValidBase32Secret(trimmedTotp)) {
+      showToast(
+        "Khóa bí mật 2FA không hợp lệ. Chỉ chấp nhận ký tự Base32 (A-Z, 2-7), hãy kiểm tra lại.",
+        "error",
+      );
+      return;
+    }
+
     setIsSavingSecret(true);
     try {
       if (activeModal === "edit" && selectedSecret) {
@@ -218,11 +230,11 @@ export const VaultDashboard: React.FC = () => {
           title,
           username,
           password,
-          totpSecret: totpSecret || undefined,
+          totpSecret: trimmedTotp || undefined,
         });
         showToast("Đã cập nhật mật khẩu", "success");
       } else {
-        await addSecret({ title, username, password, totpSecret: totpSecret || undefined });
+        await addSecret({ title, username, password, totpSecret: trimmedTotp || undefined });
         showToast("Đã thêm mật khẩu mới", "success");
       }
       // Tự động kích hoạt đồng bộ ngầm sau khi thêm/sửa mật khẩu (như 1Password).
@@ -230,6 +242,8 @@ export const VaultDashboard: React.FC = () => {
       // (trình duyệt sẽ chặn). Người dùng cần bấm nút Sync thủ công cho lần đăng nhập đầu.
       triggerSync({ interactive: false });
       closeModal();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Không thể lưu mật khẩu.", "error");
     } finally {
       setIsSavingSecret(false);
     }
@@ -243,6 +257,8 @@ export const VaultDashboard: React.FC = () => {
       triggerSync({ interactive: false });
       showToast("Đã xóa bản ghi vĩnh viễn", "success");
       closeModal();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Không thể xóa bản ghi.", "error");
     } finally {
       setIsDeleting(false);
     }
@@ -272,13 +288,13 @@ export const VaultDashboard: React.FC = () => {
 
       {/* Header (Sticky) */}
       <header className="sticky top-0 z-40 border-b border-white/5 bg-[#0a0a0a]/80 backdrop-blur-xl">
-        <div className="max-w-7123xl mx-auto flex h-20 items-center justify-between px-4 md:px-8">
+        <div className="mx-auto flex max-w-full flex-wrap items-center justify-between gap-4 px-4 pt-4 md:px-8 lg:gap-0">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-[0_0_15px_rgba(16,185,129,0.4)]">
               <ShieldCheck size={24} className="text-slate-950" />
             </div>
             <h1 className="bg-gradient-to-r from-white to-gray-400 bg-clip-text text-xl font-bold text-transparent">
-              Zero-Knowledge Vault
+              Vùng bảo mật
             </h1>
             <span className="hidden rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs text-slate-400 md:inline">
               AES-GCM 256 + TOTP
@@ -348,7 +364,7 @@ export const VaultDashboard: React.FC = () => {
       </header>
 
       {/* Main Content Area */}
-      <main className="relative z-10 mx-auto max-w-6xl px-4 py-8 md:px-8">
+      <main className="relative z-10 mx-auto max-w-full px-4 py-8 md:px-8">
         {skippedRecordCount > 0 && (
           <div className="mb-6 flex items-start gap-2 rounded-xl border border-amber-700/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
             <AlertCircle size={18} className="mt-0.5 shrink-0" />
@@ -361,11 +377,11 @@ export const VaultDashboard: React.FC = () => {
         )}
 
         {/* Actions Bar */}
-        <div className="mb-8 flex flex-col items-center justify-between gap-4 md:flex-row">
-          <div className="group relative w-full md:max-w-md">
+        <div className="mb-8 flex flex-col items-stretch justify-between gap-4 md:flex-row md:items-center">
+          <div className="group relative w-full md:flex-1">
             <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 opacity-0 blur transition-opacity duration-500 group-focus-within:opacity-20" />
             <div className="relative flex items-center">
-              <div className="pointer-events-none absolute pl-4">
+              <div className="pointer-events-none absolute inset-y-0 left-0 z-10 flex items-center pl-4">
                 <Search
                   size={20}
                   className="text-gray-400 transition-colors group-focus-within:text-emerald-400"
@@ -381,7 +397,7 @@ export const VaultDashboard: React.FC = () => {
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-0 flex items-center pr-4 text-xs text-gray-500 transition-colors hover:text-gray-300"
+                  className="absolute inset-y-0 right-0 z-10 flex items-center pr-4 text-xs text-gray-500 transition-colors hover:text-gray-300"
                 >
                   Xóa lọc
                 </button>
@@ -391,7 +407,7 @@ export const VaultDashboard: React.FC = () => {
 
           <button
             onClick={openAddModal}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-3.5 font-bold text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all hover:from-emerald-400 hover:to-emerald-500 hover:shadow-[0_0_25px_rgba(16,185,129,0.5)] active:scale-[0.98] md:w-auto"
+            className="flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-6 py-3.5 font-bold text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.3)] transition-all hover:from-emerald-400 hover:to-emerald-500 hover:shadow-[0_0_25px_rgba(16,185,129,0.5)] active:scale-[0.98] md:w-auto"
           >
             <Plus size={20} />
             Thêm Mật khẩu
@@ -405,7 +421,7 @@ export const VaultDashboard: React.FC = () => {
         {/* Grid Layout với Framer Motion */}
         <motion.div
           layout
-          className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-6 lg:grid-cols-3"
+          className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-6 lg:grid-cols-4"
         >
           <AnimatePresence mode="popLayout">
             {filteredSecrets.length > 0 ? (
@@ -485,14 +501,15 @@ export const VaultDashboard: React.FC = () => {
                     placeholder="Khóa bí mật 2FA (Base32: JBSWY3D...) - Tùy chọn"
                     value={totpSecret}
                     onChange={(e) => setTotpSecret(e.target.value)}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pr-24 pl-3.5 font-mono text-sm text-emerald-400 placeholder:font-sans placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pr-14 pl-3.5 font-mono text-sm text-emerald-400 placeholder:font-sans placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => setIsScannerOpen(true)}
-                    className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs font-semibold text-slate-200 transition-colors hover:bg-slate-700"
+                    title="Quét mã QR"
+                    className="absolute top-1.5 right-1.5 flex items-center justify-center rounded-md border border-slate-700 bg-slate-800 p-1.5 text-slate-200 transition-colors hover:bg-slate-700 hover:text-emerald-400"
                   >
-                    📷 Quét QR
+                    <QrCode size={16} />
                   </button>
                 </div>
               </div>

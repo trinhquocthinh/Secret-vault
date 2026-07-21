@@ -40,6 +40,19 @@ export class TotpEngine {
   }
 
   /**
+   * Kiểm tra nhanh một chuỗi có phải Base32 hợp lệ (RFC 4648) hay không, dùng để validate
+   * khóa bí mật 2FA do người dùng nhập TRƯỚC khi lưu vào vault (tránh lưu một secret hỏng
+   * rồi mới phát hiện lỗi khi hiển thị mã OTP).
+   */
+  public static isValidBase32Secret(secretBase32: string): boolean {
+    try {
+      return this.base32ToUint8Array(secretBase32).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Sinh mã OTP 6 chữ số hoàn toàn offline từ Secret Base32 và thời gian hệ thống
    */
   public static async generateTOTP(secretBase32: string, step = 30): Promise<string> {

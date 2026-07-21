@@ -27,9 +27,9 @@ export function useLiveTOTP(secretBase32?: string) {
     try {
       const code = await TotpEngine.generateTOTP(secret);
       setOtp(code);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (e) {
-      setOtp("ERROR ");
+      console.error("Không thể tạo mã OTP - khóa bí mật 2FA không hợp lệ:", e);
+      setOtp("ERROR");
     }
   }, []);
 
@@ -72,5 +72,5 @@ export function useLiveTOTP(secretBase32?: string) {
     };
   }, [secretBase32, generateCode]);
 
-  return { otp, secondsLeft, progress };
+  return { otp, secondsLeft, progress, isOtpReady: /^\d{6}$/.test(otp) };
 }
